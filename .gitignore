@@ -1,0 +1,17 @@
+.opencode/
+_bmad/
+_bmad-output/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor temp files
+*.swp
+*.swo
+*~
+
+# Dependency and build output
+node_modules/
+dist/
+test-results/
