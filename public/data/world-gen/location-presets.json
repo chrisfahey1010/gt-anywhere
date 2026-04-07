@@ -1,0 +1,166 @@
+[
+  {
+    "reuseKey": "san-francisco-ca",
+    "presetId": "preset-san-francisco",
+    "displayName": "San Francisco, CA",
+    "districtName": "Market Street",
+    "bounds": {
+      "minX": -420,
+      "maxX": 420,
+      "minZ": -360,
+      "maxZ": 360
+    },
+    "roads": [
+      {
+        "id": "market-st",
+        "kind": "primary",
+        "width": 20,
+        "points": [
+          { "x": -320, "y": 0, "z": -180 },
+          { "x": 320, "y": 0, "z": 180 }
+        ]
+      },
+      {
+        "id": "van-ness-ave",
+        "kind": "secondary",
+        "width": 14,
+        "points": [
+          { "x": -40, "y": 0, "z": -280 },
+          { "x": 40, "y": 0, "z": 280 }
+        ]
+      },
+      {
+        "id": "mission-st",
+        "kind": "tertiary",
+        "width": 12,
+        "points": [
+          { "x": -280, "y": 0, "z": 120 },
+          { "x": 220, "y": 0, "z": 260 }
+        ]
+      }
+    ]
+  },
+  {
+    "reuseKey": "new-york-ny",
+    "presetId": "preset-new-york",
+    "displayName": "New York, NY",
+    "districtName": "Midtown",
+    "bounds": {
+      "minX": -400,
+      "maxX": 400,
+      "minZ": -420,
+      "maxZ": 420
+    },
+    "roads": [
+      {
+        "id": "broadway",
+        "kind": "primary",
+        "width": 18,
+        "points": [
+          { "x": -240, "y": 0, "z": -360 },
+          { "x": 180, "y": 0, "z": 360 }
+        ]
+      },
+      {
+        "id": "seventh-ave",
+        "kind": "secondary",
+        "width": 14,
+        "points": [
+          { "x": -60, "y": 0, "z": -380 },
+          { "x": -20, "y": 0, "z": 380 }
+        ]
+      },
+      {
+        "id": "west-42nd",
+        "kind": "tertiary",
+        "width": 12,
+        "points": [
+          { "x": -360, "y": 0, "z": 40 },
+          { "x": 320, "y": 0, "z": 20 }
+        ]
+      }
+    ]
+  },
+  {
+    "reuseKey": "times-square-new-york-ny",
+    "presetId": "preset-times-square",
+    "displayName": "Times Square, New York, NY",
+    "districtName": "Times Square",
+    "bounds": {
+      "minX": -320,
+      "maxX": 320,
+      "minZ": -320,
+      "maxZ": 320
+    },
+    "roads": [
+      {
+        "id": "broadway-plaza",
+        "kind": "primary",
+        "width": 18,
+        "points": [
+          { "x": -220, "y": 0, "z": -260 },
+          { "x": 180, "y": 0, "z": 220 }
+        ]
+      },
+      {
+        "id": "seventh-ave-ts",
+        "kind": "secondary",
+        "width": 14,
+        "points": [
+          { "x": -20, "y": 0, "z": -280 },
+          { "x": 20, "y": 0, "z": 280 }
+        ]
+      },
+      {
+        "id": "west-45th",
+        "kind": "tertiary",
+        "width": 12,
+        "points": [
+          { "x": -280, "y": 0, "z": 60 },
+          { "x": 280, "y": 0, "z": 40 }
+        ]
+      }
+    ]
+  },
+  {
+    "reuseKey": "1600-amphitheatre-parkway-mountain-view-ca",
+    "presetId": "preset-mountain-view-campus",
+    "displayName": "1600 Amphitheatre Parkway, Mountain View, CA",
+    "districtName": "North Bayshore",
+    "bounds": {
+      "minX": -380,
+      "maxX": 380,
+      "minZ": -320,
+      "maxZ": 320
+    },
+    "roads": [
+      {
+        "id": "amphitheatre-parkway",
+        "kind": "primary",
+        "width": 18,
+        "points": [
+          { "x": -320, "y": 0, "z": 0 },
+          { "x": 320, "y": 0, "z": 0 }
+        ]
+      },
+      {
+        "id": "charleston-road",
+        "kind": "secondary",
+        "width": 14,
+        "points": [
+          { "x": -80, "y": 0, "z": -220 },
+          { "x": 80, "y": 0, "z": 220 }
+        ]
+      },
+      {
+        "id": "shoreline-boulevard",
+        "kind": "tertiary",
+        "width": 12,
+        "points": [
+          { "x": -20, "y": 0, "z": -260 },
+          { "x": 120, "y": 0, "z": 260 }
+        ]
+      }
+    ]
+  }
+]

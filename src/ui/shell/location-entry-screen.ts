@@ -4,6 +4,7 @@ interface LocationEntryScreenOptions {
   host: HTMLElement;
   onSubmit(query: string): void;
   onEdit(): void;
+  onRetry(): void;
 }
 
 function escapeHtml(value: string): string {
@@ -22,27 +23,49 @@ export class LocationEntryScreen {
 
   private readonly onEdit: () => void;
 
+  private readonly onRetry: () => void;
+
   constructor(options: LocationEntryScreenOptions) {
     this.host = options.host;
     this.onSubmit = options.onSubmit;
     this.onEdit = options.onEdit;
+    this.onRetry = options.onRetry;
   }
 
   render(state: SessionState): void {
     const isResolving = state.phase === "location-resolving";
-    const isLoading = state.phase === "world-generation-requested";
-    const disableInput = isResolving || isLoading;
-    const errorMessage = state.phase === "error" ? state.error?.message ?? "Try again." : "";
+    const isGenerating = state.phase === "world-generation-requested" || state.phase === "world-generating";
+    const isLoading = state.phase === "world-loading";
+    const isBusy = isResolving || isGenerating || isLoading;
+    const isReady = state.phase === "world-ready";
+    const isRecoverableLoadError = state.phase === "world-load-error";
+    const disableInput = isBusy;
+    const placeName = state.sessionIdentity?.placeName ?? state.formQuery;
+    const errorMessage =
+      state.phase === "error" || isRecoverableLoadError ? state.error?.message ?? "Try again." : "";
     const loadingMessage = isResolving
       ? "Resolving your location..."
-      : isLoading && state.sessionIdentity
-        ? `Loading session for ${state.sessionIdentity.placeName}...`
+      : isGenerating && placeName
+        ? `Generating slice for ${placeName}...`
+        : isLoading && placeName
+          ? `Loading slice for ${placeName}...`
+          : isReady && placeName
+            ? `Slice ready for ${placeName}.`
+            : isRecoverableLoadError && placeName
+              ? `Slice load paused for ${placeName}.`
         : "";
-    const submitLabel = isResolving ? "Resolving..." : isLoading ? "Loading..." : state.phase === "error" ? "Try Again" : "Start Session";
-    const showEdit = state.phase === "error" || isLoading;
+    const submitLabel = isResolving
+      ? "Resolving..."
+      : isBusy
+        ? "Loading..."
+        : state.phase === "error"
+          ? "Try Again"
+          : "Start Session";
+    const showEdit = state.phase === "error" || isBusy || isReady || isRecoverableLoadError;
+    const showRetry = isRecoverableLoadError;
 
     this.host.innerHTML = `
-      <main class="location-shell">
+      <main class="location-shell ${isReady || isRecoverableLoadError ? "location-shell--overlay" : ""}">
         <section class="location-card" aria-labelledby="location-shell-title">
           <div class="location-copy">
             <p class="eyebrow">Session Setup</p>
@@ -64,6 +87,7 @@ export class LocationEntryScreen {
             />
             <div class="action-row">
               <button class="primary-action" type="submit" ${disableInput ? "disabled" : ""}>${submitLabel}</button>
+              ${showRetry ? '<button class="secondary-action" type="button" data-testid="retry-load">Retry load</button>' : ""}
               ${showEdit ? '<button class="secondary-action" type="button" data-testid="edit-location">Edit location</button>' : ""}
             </div>
             <p class="field-hint">Examples: Times Square, New York, NY; 1600 Amphitheatre Parkway, Mountain View, CA.</p>
@@ -77,6 +101,7 @@ export class LocationEntryScreen {
     const form = this.host.querySelector("form");
     const input = this.host.querySelector("input");
     const editButton = this.host.querySelector('[data-testid="edit-location"]');
+    const retryButton = this.host.querySelector('[data-testid="retry-load"]');
 
     form?.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -90,6 +115,10 @@ export class LocationEntryScreen {
 
     editButton?.addEventListener("click", () => {
       this.onEdit();
+    });
+
+    retryButton?.addEventListener("click", () => {
+      this.onRetry();
     });
 
     if (input instanceof HTMLInputElement && !disableInput) {

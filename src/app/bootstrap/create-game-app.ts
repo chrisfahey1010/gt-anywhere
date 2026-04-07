@@ -12,19 +12,36 @@ import {
   type LocationResolveFailure,
   type WorldGenerationRequest
 } from "../../world/generation/location-resolver";
+import { createWorldLoadFailure, type WorldLoadFailure } from "../../world/generation/world-load-failure";
+import { DefaultWorldSliceGenerator, type WorldSliceGenerator } from "../../world/generation/world-slice-generator";
+import type { SliceManifest } from "../../world/chunks/slice-manifest";
+import type { WorldSceneHandle, WorldSceneLoader } from "../../rendering/scene/create-world-scene";
 
 export interface CreateGameAppOptions {
   host: HTMLElement;
   logger?: Logger;
   resolver?: LocationResolver;
   eventBus?: GameEventBus;
+  sliceGenerator?: WorldSliceGenerator;
+  sceneLoader?: WorldSceneLoader;
   clock?: () => string;
+  now?: () => number;
 }
 
 export interface GameApp {
   getSnapshot(): SessionState;
   whenIdle(): Promise<void>;
   destroy(): void;
+}
+
+async function createDefaultWorldSceneLoader(): Promise<WorldSceneLoader> {
+  const { BabylonWorldSceneLoader } = await import("../../rendering/scene/create-world-scene");
+
+  return new BabylonWorldSceneLoader();
+}
+
+function getStoredManifest(sliceGenerator: WorldSliceGenerator, manifest: SliceManifest): SliceManifest {
+  return sliceGenerator.getStoredManifest?.(manifest.sliceId) ?? manifest;
 }
 
 function createUnexpectedResolveFailure(query: string): LocationResolveFailure {
@@ -37,22 +54,59 @@ function createUnexpectedResolveFailure(query: string): LocationResolveFailure {
   };
 }
 
+function createSceneLoadFailure(request: WorldGenerationRequest, error: unknown): WorldLoadFailure {
+  return createWorldLoadFailure(
+    "WORLD_SCENE_LOAD_FAILED",
+    "world-loading",
+    "The world could not finish loading. Retry or edit the location.",
+    request.location.placeName,
+    {
+      error: error instanceof Error ? error.message : String(error)
+    }
+  );
+}
+
+function createAppHosts(host: HTMLElement): {
+  renderHost: HTMLDivElement;
+  shellHost: HTMLDivElement;
+} {
+  const renderHost = document.createElement("div");
+  renderHost.className = "world-render-host";
+  renderHost.dataset.testid = "render-host";
+
+  const shellHost = document.createElement("div");
+  shellHost.className = "world-shell-host";
+
+  host.replaceChildren(renderHost, shellHost);
+
+  return { renderHost, shellHost };
+}
+
 export async function createGameApp(options: CreateGameAppOptions): Promise<GameApp> {
   const logger = options.logger ?? createLogger();
   const resolver = options.resolver ?? new LocationResolver();
   const eventBus = options.eventBus ?? new GameEventBus();
+  const sliceGenerator = options.sliceGenerator ?? new DefaultWorldSliceGenerator();
   const clock = options.clock ?? (() => new Date().toISOString());
+  const now = options.now ?? (() => Date.now());
+  const { renderHost, shellHost } = createAppHosts(options.host);
   const screen = new LocationEntryScreen({
-    host: options.host,
+    host: shellHost,
     onSubmit: handleSubmit,
-    onEdit: handleEdit
+    onEdit: handleEdit,
+    onRetry: handleRetry
   });
 
   let state = createInitialSessionState();
   let pendingWork = Promise.resolve();
+  let activeLoadId = 0;
+  let worldScene: WorldSceneHandle | null = null;
+  let sceneLoader = options.sceneLoader ?? null;
+  let sceneLoaderPromise: Promise<WorldSceneLoader> | null = null;
 
   const render = (): void => {
     screen.render(state);
+    renderHost.dataset.phase = state.phase;
   };
 
   const settlePendingWork = (work: Promise<unknown>): void => {
@@ -62,7 +116,143 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     );
   };
 
-  const finishSuccess = (handoff: WorldGenerationRequest): void => {
+  const disposeWorldScene = (): void => {
+    worldScene?.dispose();
+    worldScene = null;
+    renderHost.innerHTML = "";
+  };
+
+  const getSceneLoader = async (): Promise<WorldSceneLoader> => {
+    if (sceneLoader) {
+      return sceneLoader;
+    }
+
+    sceneLoaderPromise ??= createDefaultWorldSceneLoader().then((loader) => {
+      sceneLoader = loader;
+
+      return loader;
+    });
+
+    return sceneLoaderPromise;
+  };
+
+  const emitLoadFailure = (request: WorldGenerationRequest, failure: WorldLoadFailure, startedAtMs: number): void => {
+    const durationMs = now() - startedAtMs;
+
+    eventBus.emit({
+      type: "world.load.failed",
+      request,
+      failure,
+      durationMs
+    });
+    logger.error("world.load.failed", {
+      code: failure.code,
+      stage: failure.stage,
+      placeName: failure.placeName,
+      durationMs,
+      ...failure.details
+    });
+
+    disposeWorldScene();
+    state = transitionSessionState(state, {
+      type: "world.load.failed",
+      failure
+    });
+    render();
+  };
+
+  const runWorldLoad = async (request: WorldGenerationRequest): Promise<void> => {
+    const startedAtMs = now();
+    const loadId = ++activeLoadId;
+
+    eventBus.emit({ type: "world.generation.started", request });
+    logger.info("world.generation.started", {
+      placeName: request.location.placeName,
+      sessionKey: request.location.sessionKey,
+      sliceSeed: request.sliceSeed
+    });
+
+    state = transitionSessionState(state, { type: "world.generation.started" });
+    render();
+
+    const result = await sliceGenerator.generate(request);
+
+    if (loadId !== activeLoadId) {
+      return;
+    }
+
+    if (!result.ok) {
+      emitLoadFailure(request, result, startedAtMs);
+      return;
+    }
+
+    const manifest = getStoredManifest(sliceGenerator, result.manifest);
+
+    const manifestDurationMs = now() - startedAtMs;
+
+    eventBus.emit({
+      type: "world.manifest.ready",
+      request,
+      manifest,
+      spawnCandidate: result.spawnCandidate,
+      durationMs: manifestDurationMs
+    });
+    logger.info("world.manifest.ready", {
+      placeName: request.location.placeName,
+      sliceId: manifest.sliceId,
+      durationMs: manifestDurationMs,
+      chunkCount: manifest.chunks.length,
+      roadCount: manifest.roads.length
+    });
+
+    state = transitionSessionState(state, {
+      type: "world.manifest.ready",
+      manifest,
+      spawnCandidate: result.spawnCandidate
+    });
+    render();
+
+    try {
+      disposeWorldScene();
+      const activeSceneLoader = await getSceneLoader();
+
+      worldScene = await activeSceneLoader.load({
+        renderHost,
+        manifest,
+        spawnCandidate: result.spawnCandidate
+      });
+
+      if (loadId !== activeLoadId) {
+        disposeWorldScene();
+        return;
+      }
+
+      const readyDurationMs = now() - startedAtMs;
+
+      eventBus.emit({
+        type: "world.scene.ready",
+        request,
+        manifest,
+        durationMs: readyDurationMs
+      });
+      logger.info("world.scene.ready", {
+        placeName: request.location.placeName,
+        sliceId: manifest.sliceId,
+        durationMs: readyDurationMs
+      });
+
+      state = transitionSessionState(state, { type: "world.scene.ready" });
+      render();
+    } catch (error) {
+      if (loadId !== activeLoadId) {
+        return;
+      }
+
+      emitLoadFailure(request, createSceneLoadFailure(request, error), startedAtMs);
+    }
+  };
+
+  const finishSuccess = async (handoff: WorldGenerationRequest): Promise<void> => {
     eventBus.emit({ type: "session.location.resolved", identity: handoff.location });
     logger.info("session.location.resolved", {
       placeName: handoff.location.placeName,
@@ -82,6 +272,8 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
       handoff
     });
     render();
+
+    await runWorldLoad(handoff);
   };
 
   const finishFailure = (query: string, failure: LocationResolveFailure): void => {
@@ -101,14 +293,39 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   };
 
   function handleEdit(): void {
+    activeLoadId += 1;
+    disposeWorldScene();
     state = transitionSessionState(state, { type: "location.edit.requested" });
     render();
   }
 
-  function handleSubmit(query: string): void {
-    if (state.phase === "location-resolving") {
+  function handleRetry(): void {
+    if (state.phase !== "world-load-error" || state.handoff === null) {
       return;
     }
+
+    const request = state.handoff;
+
+    state = transitionSessionState(state, { type: "world.retry.requested" });
+    render();
+
+    settlePendingWork(runWorldLoad(request));
+  }
+
+  function handleSubmit(query: string): void {
+    if (
+      state.phase === "location-resolving" ||
+      state.phase === "world-generation-requested" ||
+      state.phase === "world-generating" ||
+      state.phase === "world-loading"
+    ) {
+      return;
+    }
+
+    const requestId = activeLoadId + 1;
+
+    activeLoadId = requestId;
+    disposeWorldScene();
 
     eventBus.emit({ type: "session.location.submitted", query });
     logger.info("session.location.submitted", { query });
@@ -118,15 +335,23 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
 
     const work = resolver
       .resolve(query)
-      .then((result) => {
+      .then(async (result) => {
+        if (requestId !== activeLoadId) {
+          return;
+        }
+
         if (!result.ok) {
           finishFailure(query, result);
           return;
         }
 
-        finishSuccess(createWorldGenerationRequest(result.value, clock));
+        await finishSuccess(createWorldGenerationRequest(result.value, clock));
       })
       .catch((error) => {
+        if (requestId !== activeLoadId) {
+          return;
+        }
+
         logger.error("session.location.resolve-failed", {
           query,
           error: error instanceof Error ? error.message : String(error)
@@ -140,11 +365,13 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   state = transitionSessionState(state, { type: "app.boot.completed" });
   render();
 
-  return {
-    getSnapshot: () => state,
-    whenIdle: () => pendingWork,
-    destroy: () => {
-      options.host.innerHTML = "";
-    }
-  };
+    return {
+      getSnapshot: () => state,
+      whenIdle: () => pendingWork,
+      destroy: () => {
+        activeLoadId += 1;
+        disposeWorldScene();
+        options.host.innerHTML = "";
+      }
+    };
 }

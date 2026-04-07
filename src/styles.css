@@ -21,6 +21,46 @@ input {
 
 #app {
   min-height: 100vh;
+  position: relative;
+  overflow: hidden;
+}
+
+.world-render-host {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.28), transparent 42%),
+    linear-gradient(180deg, #8ec5fc 0%, #d4ecff 42%, #dfe7d3 100%);
+}
+
+.world-render-host[data-phase="world-ready"],
+.world-render-host[data-phase="world-loading"],
+.world-render-host[data-phase="world-load-error"] {
+  min-height: 100vh;
+}
+
+.world-render-host canvas,
+.world-canvas {
+  display: block;
+  width: 100%;
+  height: 100vh;
+}
+
+.world-shell-host {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.world-shell-host .location-shell {
+  pointer-events: none;
+}
+
+.world-shell-host .location-card,
+.world-shell-host .location-form,
+.world-shell-host .location-input,
+.world-shell-host button,
+.world-shell-host label {
+  pointer-events: auto;
 }
 
 .location-shell {
@@ -28,6 +68,17 @@ input {
   display: grid;
   place-items: center;
   padding: 24px;
+}
+
+.location-shell--overlay {
+  align-content: start;
+  justify-items: end;
+}
+
+.location-shell--overlay .location-card {
+  width: min(100%, 420px);
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(18px);
 }
 
 .location-card {

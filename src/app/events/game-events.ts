@@ -3,12 +3,34 @@ import type {
   SessionLocationIdentity,
   WorldGenerationRequest
 } from "../../world/generation/location-resolver";
+import type { SpawnCandidate, SliceManifest } from "../../world/chunks/slice-manifest";
+import type { WorldLoadFailure } from "../../world/generation/world-load-failure";
 
 export type GameEvent =
   | { type: "session.location.submitted"; query: string }
   | { type: "session.location.resolved"; identity: SessionLocationIdentity }
   | { type: "session.location.resolve-failed"; failure: LocationResolveFailure; query: string }
-  | { type: "world.generation.requested"; request: WorldGenerationRequest };
+  | { type: "world.generation.requested"; request: WorldGenerationRequest }
+  | { type: "world.generation.started"; request: WorldGenerationRequest }
+  | {
+      type: "world.manifest.ready";
+      request: WorldGenerationRequest;
+      manifest: SliceManifest;
+      spawnCandidate: SpawnCandidate;
+      durationMs: number;
+    }
+  | {
+      type: "world.scene.ready";
+      request: WorldGenerationRequest;
+      manifest: SliceManifest;
+      durationMs: number;
+    }
+  | {
+      type: "world.load.failed";
+      request: WorldGenerationRequest;
+      failure: WorldLoadFailure;
+      durationMs: number;
+    };
 
 type GameEventHandler<TType extends GameEvent["type"]> = (
   event: Extract<GameEvent, { type: TType }>

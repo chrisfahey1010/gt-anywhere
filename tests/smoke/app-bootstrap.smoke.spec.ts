@@ -1,12 +1,85 @@
 import { createGameApp } from "../../src/app/bootstrap/create-game-app";
+import type { WorldSceneLoader } from "../../src/rendering/scene/create-world-scene";
+import type { SliceManifest } from "../../src/world/chunks/slice-manifest";
+import type { WorldSliceGenerator } from "../../src/world/generation/world-slice-generator";
 import { validLocationQuery } from "../fixtures/location-queries";
 
 describe("app bootstrap smoke", () => {
-  it("boots to the location shell and advances on a valid submission", async () => {
+  const manifest: SliceManifest = {
+    sliceId: "san-francisco-ca-story-1-2",
+    generationVersion: "story-1-2",
+    location: {
+      placeName: "San Francisco, CA",
+      reuseKey: "san-francisco-ca",
+      sessionKey: "san-francisco-ca-story-1-1"
+    },
+    seed: "story-1-1",
+    bounds: {
+      minX: -400,
+      maxX: 400,
+      minZ: -400,
+      maxZ: 400
+    },
+    chunks: [
+      {
+        id: "chunk-0-0",
+        origin: { x: -400, y: 0, z: -400 },
+        size: { width: 800, depth: 800 },
+        roadIds: ["market-st"]
+      }
+    ],
+    roads: [
+      {
+        id: "market-st",
+        kind: "primary",
+        width: 18,
+        points: [
+          { x: -280, y: 0, z: -220 },
+          { x: 280, y: 0, z: 220 }
+        ]
+      }
+    ],
+    spawnCandidates: [
+      {
+        id: "spawn-0",
+        chunkId: "chunk-0-0",
+        position: { x: -20, y: 0, z: -20 },
+        headingDegrees: 90
+      }
+    ],
+    sceneMetadata: {
+      displayName: "San Francisco, CA",
+      districtName: "Downtown",
+      roadColor: "#f6d365",
+      groundColor: "#263238",
+      boundaryColor: "#8ec5fc"
+    }
+  };
+
+  it("boots to the location shell and reaches a slice-ready state on a valid submission", async () => {
     document.body.innerHTML = '<div id="app"></div>';
 
     const host = document.querySelector("#app") as HTMLElement;
-    const app = await createGameApp({ host });
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => ({
+        ok: true,
+        manifest,
+        spawnCandidate: manifest.spawnCandidates[0]
+      })
+    };
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost }) => {
+        renderHost.innerHTML = '<div data-testid="world-ready-scene">Fake world scene</div>';
+
+        return {
+          canvas: document.createElement("canvas"),
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+    const app = await createGameApp({ host, sliceGenerator, sceneLoader });
 
     expect(host.textContent).toContain("Enter a real-world location");
 
@@ -18,7 +91,8 @@ describe("app bootstrap smoke", () => {
 
     await app.whenIdle();
 
-    expect(app.getSnapshot().phase).toBe("world-generation-requested");
-    expect(host.textContent).toContain("Loading");
+    expect(app.getSnapshot().phase).toBe("world-ready");
+    expect(host.textContent).toContain("Slice ready");
+    expect(host.querySelector('[data-testid="world-ready-scene"]')).not.toBeNull();
   });
 });

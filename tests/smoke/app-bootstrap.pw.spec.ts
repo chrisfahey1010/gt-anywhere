@@ -4,7 +4,7 @@ import {
   validLocationAliasQuery
 } from "../fixtures/location-queries";
 
-test("boots to the location shell and advances into loading feedback after a valid submission", async ({
+test("boots to the location shell and reaches a slice-ready world after a valid submission", async ({
   page
 }) => {
   await page.goto("/");
@@ -16,8 +16,8 @@ test("boots to the location shell and advances into loading feedback after a val
   await locationInput.fill(validLocationAliasQuery);
   await locationInput.press("Enter");
 
-  await expect(page.getByTestId("loading-feedback")).toContainText("San Francisco, CA");
-  await expect(page.locator(".primary-action")).toBeDisabled();
+  await expect(page.getByTestId("loading-feedback")).toContainText("Slice ready for San Francisco, CA.");
+  await expect(page.locator("canvas")).toBeVisible();
   await expect(page.getByTestId("edit-location")).toBeVisible();
 });
 
