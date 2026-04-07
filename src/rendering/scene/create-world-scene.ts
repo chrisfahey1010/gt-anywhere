@@ -1,7 +1,6 @@
 import HavokPhysics from "@babylonjs/havok";
 import {
   AbstractMesh,
-  ArcRotateCamera,
   Color3,
   Color4,
   Engine,
@@ -15,7 +14,17 @@ import {
   TransformNode,
   Vector3
 } from "@babylonjs/core";
-import type { SpawnCandidate, SliceManifest, SliceRoad, SliceVector3 } from "../../world/chunks/slice-manifest";
+import type { SpawnCandidate, SliceManifest, SliceRoad } from "../../world/chunks/slice-manifest";
+import { createWorldSceneRuntimeError } from "../../world/generation/world-load-failure";
+import { createStarterVehicleCamera } from "../../vehicles/cameras/create-starter-vehicle-camera";
+import {
+  createPlayerVehicleController,
+  type PlayerVehicleController
+} from "../../vehicles/controllers/player-vehicle-controller";
+import {
+  createStarterVehicle,
+  type StarterVehicleRuntime
+} from "../../vehicles/physics/create-starter-vehicle";
 
 export interface WorldSceneHandle {
   canvas: HTMLCanvasElement;
@@ -30,10 +39,6 @@ export interface CreateWorldSceneOptions {
 
 export interface WorldSceneLoader {
   load(options: CreateWorldSceneOptions): Promise<WorldSceneHandle>;
-}
-
-function toVector3(point: SliceVector3, yOffset = 0): Vector3 {
-  return new Vector3(point.x, point.y + yOffset, point.z);
 }
 
 function buildRoadSegments(
@@ -81,12 +86,13 @@ function buildChunkMassing(
   scene: Scene,
   parent: TransformNode,
   manifest: SliceManifest,
-  chunkIndex: number
+  chunkIndex: number,
+  spawnChunkId: string
 ): AbstractMesh[] {
   const chunk = manifest.chunks[chunkIndex];
   const buildings: AbstractMesh[] = [];
 
-  if (!chunk) {
+  if (!chunk || chunk.id === spawnChunkId) {
     return buildings;
   }
 
@@ -120,6 +126,66 @@ function buildChunkMassing(
   return buildings;
 }
 
+function buildBoundaryWalls(
+  scene: Scene,
+  parent: TransformNode,
+  manifest: SliceManifest,
+  material: StandardMaterial
+): AbstractMesh[] {
+  const wallThickness = 4;
+  const wallHeight = 6;
+  const centerX = (manifest.bounds.minX + manifest.bounds.maxX) / 2;
+  const centerZ = (manifest.bounds.minZ + manifest.bounds.maxZ) / 2;
+  const width = manifest.bounds.maxX - manifest.bounds.minX;
+  const depth = manifest.bounds.maxZ - manifest.bounds.minZ;
+
+  const wallDefinitions = [
+    {
+      name: "slice-boundary-north",
+      width: width + wallThickness * 2,
+      depth: wallThickness,
+      position: new Vector3(centerX, wallHeight / 2, manifest.bounds.minZ - wallThickness / 2)
+    },
+    {
+      name: "slice-boundary-south",
+      width: width + wallThickness * 2,
+      depth: wallThickness,
+      position: new Vector3(centerX, wallHeight / 2, manifest.bounds.maxZ + wallThickness / 2)
+    },
+    {
+      name: "slice-boundary-west",
+      width: wallThickness,
+      depth,
+      position: new Vector3(manifest.bounds.minX - wallThickness / 2, wallHeight / 2, centerZ)
+    },
+    {
+      name: "slice-boundary-east",
+      width: wallThickness,
+      depth,
+      position: new Vector3(manifest.bounds.maxX + wallThickness / 2, wallHeight / 2, centerZ)
+    }
+  ];
+
+  return wallDefinitions.map((definition) => {
+    const wall = MeshBuilder.CreateBox(
+      definition.name,
+      {
+        width: definition.width,
+        depth: definition.depth,
+        height: wallHeight
+      },
+      scene
+    );
+
+    wall.position = definition.position;
+    wall.parent = parent;
+    wall.material = material;
+    wall.checkCollisions = true;
+
+    return wall;
+  });
+}
+
 async function enableStaticPhysics(scene: Scene, meshes: AbstractMesh[]): Promise<PhysicsAggregate[]> {
   const havok = await HavokPhysics();
   const plugin = new HavokPlugin(true, havok);
@@ -147,6 +213,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     const canvas = document.createElement("canvas");
     canvas.className = "world-canvas";
     canvas.setAttribute("aria-label", `${manifest.location.placeName} world view`);
+    canvas.tabIndex = 0;
     renderHost.replaceChildren(canvas);
 
     const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
@@ -164,18 +231,6 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     );
     const width = manifest.bounds.maxX - manifest.bounds.minX;
     const depth = manifest.bounds.maxZ - manifest.bounds.minZ;
-
-    const camera = new ArcRotateCamera(
-      "slice-camera",
-      -Math.PI / 2.6,
-      Math.PI / 3.2,
-      Math.max(width, depth) * 1.2,
-      center,
-      scene
-    );
-    camera.attachControl(canvas, true);
-    camera.lowerRadiusLimit = Math.max(width, depth) * 0.45;
-    camera.upperRadiusLimit = Math.max(width, depth) * 1.8;
 
     const light = new HemisphericLight("slice-light", new Vector3(0.1, 1, 0.1), scene);
     light.intensity = 0.95;
@@ -204,20 +259,8 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     ground.material = groundMaterial;
     ground.checkCollisions = true;
 
-    const boundary = MeshBuilder.CreateBox(
-      "slice-boundary",
-      {
-        width,
-        depth,
-        height: 2
-      },
-      scene
-    );
-    boundary.position = new Vector3(center.x, 1, center.z);
-    boundary.parent = staticSurfaceRoot;
-    boundary.material = boundaryMaterial;
-
-    const staticPhysicsMeshes: AbstractMesh[] = [ground, boundary];
+    const staticPhysicsMeshes: AbstractMesh[] = [ground];
+    staticPhysicsMeshes.push(...buildBoundaryWalls(scene, staticSurfaceRoot, manifest, boundaryMaterial));
 
     const chunkRoots = manifest.chunks.map((chunk, chunkIndex) => {
       const chunkRoot = new TransformNode(`chunk-root-${chunk.id}`, scene);
@@ -246,31 +289,102 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
           staticPhysicsMeshes.push(...buildRoadSegments(scene, chunkRoot, road, roadMaterial));
         });
 
-      staticPhysicsMeshes.push(...buildChunkMassing(scene, chunkRoot, manifest, chunkIndex));
+      staticPhysicsMeshes.push(...buildChunkMassing(scene, chunkRoot, manifest, chunkIndex, spawnCandidate.chunkId));
 
       return chunkRoot;
     });
 
     const physicsAggregates = await enableStaticPhysics(scene, staticPhysicsMeshes);
+    let controller: PlayerVehicleController;
 
-    const spawnMarkerMaterial = new StandardMaterial("spawn-marker-material", scene);
-    spawnMarkerMaterial.diffuseColor = new Color3(1, 0.85, 0.45);
-    const spawnMarker = MeshBuilder.CreateCylinder(
-      "spawn-marker",
-      { height: 6, diameter: 4 },
-      scene
-    );
-    spawnMarker.position = toVector3(spawnCandidate.position, 3);
-    spawnMarker.parent = worldRoot;
-    spawnMarker.material = spawnMarkerMaterial;
+    try {
+      controller = createPlayerVehicleController();
+    } catch (error) {
+      throw createWorldSceneRuntimeError(
+        "STARTER_VEHICLE_POSSESSION_FAILED",
+        "vehicle-possession",
+        "The starter vehicle could not be controlled.",
+        {
+          error: error instanceof Error ? error.message : String(error),
+          spawnCandidateId: spawnCandidate.id
+        }
+      );
+    }
+
+    let starterVehicle: StarterVehicleRuntime;
+
+    try {
+      starterVehicle = createStarterVehicle({
+        scene,
+        parent: worldRoot,
+        spawnCandidate,
+        controller
+      });
+    } catch (error) {
+      controller.dispose();
+      throw createWorldSceneRuntimeError(
+        "STARTER_VEHICLE_SPAWN_FAILED",
+        "vehicle-spawning",
+        "The starter vehicle could not be spawned.",
+        {
+          error: error instanceof Error ? error.message : String(error),
+          spawnCandidateId: spawnCandidate.id
+        }
+      );
+    }
+
+    let camera: ReturnType<typeof createStarterVehicleCamera>;
+    const spawnPoint = new Vector3(spawnCandidate.position.x, spawnCandidate.position.y, spawnCandidate.position.z);
+
+    const updateStarterVehicle = (): void => {
+      starterVehicle.update();
+    };
+
+    const syncCanvasTelemetry = (): void => {
+      const deltaX = starterVehicle.mesh.position.x - spawnPoint.x;
+      const deltaZ = starterVehicle.mesh.position.z - spawnPoint.z;
+      const horizontalDistance = Math.sqrt(deltaX * deltaX + deltaZ * deltaZ);
+
+      canvas.dataset.starterVehicleDistance = horizontalDistance.toFixed(3);
+      canvas.dataset.starterVehicleX = starterVehicle.mesh.position.x.toFixed(3);
+      canvas.dataset.starterVehicleZ = starterVehicle.mesh.position.z.toFixed(3);
+    };
+
+    try {
+      camera = createStarterVehicleCamera({ scene, target: starterVehicle.mesh });
+      scene.registerBeforeRender(updateStarterVehicle);
+    } catch (error) {
+      controller.dispose();
+      starterVehicle.dispose();
+      throw createWorldSceneRuntimeError(
+        "STARTER_VEHICLE_POSSESSION_FAILED",
+        "vehicle-possession",
+        "The starter vehicle could not be controlled.",
+        {
+          error: error instanceof Error ? error.message : String(error),
+          spawnCandidateId: spawnCandidate.id
+        }
+      );
+    }
 
     scene.metadata = {
       sliceId: manifest.sliceId,
       worldRootName: worldRoot.name,
       staticSurfaceRootName: staticSurfaceRoot.name,
       chunkRootNames: chunkRoots.map((chunkRoot) => chunkRoot.name),
-      physicsReady: scene.isPhysicsEnabled()
+      physicsReady: scene.isPhysicsEnabled(),
+      starterVehicleId: starterVehicle.mesh.name,
+      spawnRoadId: spawnCandidate.roadId,
+      spawnChunkId: spawnCandidate.chunkId,
+      readinessMilestone: "controllable-vehicle",
+      activeCamera: camera.getClassName()
     };
+    canvas.dataset.readyMilestone = "controllable-vehicle";
+    canvas.dataset.activeCamera = camera.getClassName();
+    canvas.dataset.spawnRoadId = spawnCandidate.roadId;
+    canvas.dataset.spawnChunkId = spawnCandidate.chunkId;
+    canvas.dataset.starterVehicleId = starterVehicle.mesh.name;
+    syncCanvasTelemetry();
 
     const resize = (): void => {
       engine.resize();
@@ -279,12 +393,16 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     window.addEventListener("resize", resize);
     engine.runRenderLoop(() => {
       scene.render();
+      syncCanvasTelemetry();
     });
 
     return {
       canvas,
       dispose: () => {
         window.removeEventListener("resize", resize);
+        scene.unregisterBeforeRender(updateStarterVehicle);
+        controller.dispose();
+        starterVehicle.dispose();
         physicsAggregates.forEach((aggregate) => aggregate.dispose());
         scene.dispose();
         engine.dispose();

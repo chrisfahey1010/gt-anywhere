@@ -33,8 +33,20 @@ export interface SliceRoad {
 export interface SpawnCandidate {
   id: string;
   chunkId: string;
+  roadId: string;
   position: SliceVector3;
   headingDegrees: number;
+  surface: "road" | "shoulder";
+  laneIndex: number;
+  starterVehicle: {
+    kind: "starter-car";
+    placement: "lane-center";
+    dimensions: {
+      width: number;
+      height: number;
+      length: number;
+    };
+  };
 }
 
 export interface SliceSceneMetadata {

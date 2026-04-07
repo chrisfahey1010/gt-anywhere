@@ -16,8 +16,28 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
   await locationInput.fill(validLocationAliasQuery);
   await locationInput.press("Enter");
 
+  const canvas = page.locator("canvas");
+
   await expect(page.getByTestId("loading-feedback")).toContainText("Slice ready for San Francisco, CA.");
-  await expect(page.locator("canvas")).toBeVisible();
+  await expect(canvas).toBeVisible();
+  await expect(canvas).toHaveAttribute("data-ready-milestone", "controllable-vehicle");
+  await expect(canvas).toHaveAttribute("data-active-camera", "FollowCamera");
+  await expect(canvas).toHaveAttribute("data-starter-vehicle-id", /starter-vehicle-/);
+
+  const startingDistance = Number((await canvas.getAttribute("data-starter-vehicle-distance")) ?? "0");
+
+  await canvas.click();
+  await page.keyboard.down("w");
+  await expect
+    .poll(
+      async () => Number((await canvas.getAttribute("data-starter-vehicle-distance")) ?? "0"),
+      {
+        timeout: 5000
+      }
+    )
+    .toBeGreaterThan(startingDistance + 0.5);
+  await page.keyboard.up("w");
+
   await expect(page.getByTestId("edit-location")).toBeVisible();
 });
 

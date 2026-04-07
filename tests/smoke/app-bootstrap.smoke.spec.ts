@@ -1,6 +1,7 @@
 import { createGameApp } from "../../src/app/bootstrap/create-game-app";
+import { GameEventBus } from "../../src/app/events/game-events";
 import type { WorldSceneLoader } from "../../src/rendering/scene/create-world-scene";
-import type { SliceManifest } from "../../src/world/chunks/slice-manifest";
+import type { SliceManifest, SpawnCandidate } from "../../src/world/chunks/slice-manifest";
 import type { WorldSliceGenerator } from "../../src/world/generation/world-slice-generator";
 import { validLocationQuery } from "../fixtures/location-queries";
 
@@ -43,8 +44,20 @@ describe("app bootstrap smoke", () => {
       {
         id: "spawn-0",
         chunkId: "chunk-0-0",
+        roadId: "market-st",
         position: { x: -20, y: 0, z: -20 },
-        headingDegrees: 90
+        headingDegrees: 90,
+        surface: "road",
+        laneIndex: 0,
+        starterVehicle: {
+          kind: "starter-car",
+          placement: "lane-center",
+          dimensions: {
+            width: 2.2,
+            height: 1.6,
+            length: 4.6
+          }
+        }
       }
     ],
     sceneMetadata: {
@@ -60,6 +73,9 @@ describe("app bootstrap smoke", () => {
     document.body.innerHTML = '<div id="app"></div>';
 
     const host = document.querySelector("#app") as HTMLElement;
+    const eventBus = new GameEventBus();
+    let readyMilestone: string | null = null;
+    let receivedSpawnCandidate: SpawnCandidate | null = null;
     const sliceGenerator: WorldSliceGenerator = {
       generate: async () => ({
         ok: true,
@@ -68,8 +84,10 @@ describe("app bootstrap smoke", () => {
       })
     };
     const sceneLoader: WorldSceneLoader = {
-      load: async ({ renderHost }) => {
-        renderHost.innerHTML = '<div data-testid="world-ready-scene">Fake world scene</div>';
+      load: async ({ renderHost, spawnCandidate }) => {
+        receivedSpawnCandidate = spawnCandidate;
+        renderHost.innerHTML =
+          '<div data-testid="world-ready-scene" data-ready-milestone="controllable-vehicle">Fake world scene</div>';
 
         return {
           canvas: document.createElement("canvas"),
@@ -79,7 +97,12 @@ describe("app bootstrap smoke", () => {
         };
       }
     };
-    const app = await createGameApp({ host, sliceGenerator, sceneLoader });
+
+    eventBus.on("world.scene.ready", (event) => {
+      readyMilestone = event.readinessMilestone;
+    });
+
+    const app = await createGameApp({ host, eventBus, sliceGenerator, sceneLoader });
 
     expect(host.textContent).toContain("Enter a real-world location");
 
@@ -94,5 +117,14 @@ describe("app bootstrap smoke", () => {
     expect(app.getSnapshot().phase).toBe("world-ready");
     expect(host.textContent).toContain("Slice ready");
     expect(host.querySelector('[data-testid="world-ready-scene"]')).not.toBeNull();
+    expect(host.querySelector('[data-ready-milestone="controllable-vehicle"]')).not.toBeNull();
+    expect(receivedSpawnCandidate).toMatchObject({
+      id: "spawn-0",
+      roadId: "market-st",
+      starterVehicle: {
+        kind: "starter-car"
+      }
+    });
+    expect(readyMilestone).toBe("controllable-vehicle");
   });
 });

@@ -24,6 +24,7 @@ export type GameEvent =
       request: WorldGenerationRequest;
       manifest: SliceManifest;
       durationMs: number;
+      readinessMilestone: "controllable-vehicle";
     }
   | {
       type: "world.load.failed";

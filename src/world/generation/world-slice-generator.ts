@@ -160,6 +160,51 @@ function roadTouchesChunk(road: SliceRoad, chunk: SliceChunk): boolean {
   );
 }
 
+function createStarterVehicleSpawnPlan(): SpawnCandidate["starterVehicle"] {
+  return {
+    kind: "starter-car",
+    placement: "lane-center",
+    dimensions: {
+      width: 2.2,
+      height: 1.6,
+      length: 4.6
+    }
+  };
+}
+
+function calculateHeadingDegrees(start: SliceRoad["points"][number], end: SliceRoad["points"][number]): number {
+  return (Math.atan2(end.x - start.x, end.z - start.z) * 180) / Math.PI;
+}
+
+function calculateSegmentLength(start: SliceRoad["points"][number], end: SliceRoad["points"][number]): number {
+  const deltaX = end.x - start.x;
+  const deltaZ = end.z - start.z;
+
+  return Math.sqrt(deltaX * deltaX + deltaZ * deltaZ);
+}
+
+function moveAlongRoad(
+  start: SliceRoad["points"][number],
+  end: SliceRoad["points"][number],
+  distance: number
+): SliceRoad["points"][number] {
+  const deltaX = end.x - start.x;
+  const deltaZ = end.z - start.z;
+  const length = Math.sqrt(deltaX * deltaX + deltaZ * deltaZ);
+
+  if (length === 0) {
+    return { ...start };
+  }
+
+  const ratio = Math.min(1, distance / length);
+
+  return {
+    x: start.x + deltaX * ratio,
+    y: start.y + (end.y - start.y) * ratio,
+    z: start.z + deltaZ * ratio
+  };
+}
+
 function runChunkAssembler(bounds: SliceBounds, roads: SliceRoad[]): SliceChunk[] {
   const width = (bounds.maxX - bounds.minX) / 2;
   const depth = (bounds.maxZ - bounds.minZ) / 2;
@@ -192,18 +237,26 @@ function runChunkAssembler(bounds: SliceBounds, roads: SliceRoad[]): SliceChunk[
 function runSpawnPlanner(chunks: SliceChunk[], roads: SliceRoad[]): SpawnCandidate[] {
   const primaryRoad = roads[0];
   const spawnChunk = chunks.find((chunk) => chunk.roadIds.includes(primaryRoad?.id ?? "")) ?? chunks[0];
-  const primaryPoint = primaryRoad?.points[0] ?? { x: 0, y: 0, z: 0 };
+  const primaryStart = primaryRoad?.points[0] ?? { x: 0, y: 0, z: 0 };
+  const primaryEnd = primaryRoad?.points[1] ?? primaryStart;
+  const starterVehicle = createStarterVehicleSpawnPlan();
+  const segmentLength = calculateSegmentLength(primaryStart, primaryEnd);
+  const desiredInsetDistance = primaryRoad
+    ? Math.max(primaryRoad.width * 1.5, starterVehicle.dimensions.length * 4, 24)
+    : 0;
+  const spawnInsetDistance = Math.min(desiredInsetDistance, segmentLength / 2);
+  const spawnPosition = moveAlongRoad(primaryStart, primaryEnd, spawnInsetDistance);
 
   return [
     {
       id: `spawn-${spawnChunk?.id ?? "0"}`,
       chunkId: spawnChunk?.id ?? chunks[0]?.id ?? "chunk-0-0",
-      position: {
-        x: primaryPoint.x,
-        y: 0,
-        z: primaryPoint.z
-      },
-      headingDegrees: 90
+      roadId: primaryRoad?.id ?? "road-0",
+      position: spawnPosition,
+      headingDegrees: calculateHeadingDegrees(primaryStart, primaryEnd),
+      surface: "road",
+      laneIndex: 0,
+      starterVehicle
     }
   ];
 }
@@ -325,8 +378,12 @@ export class DefaultWorldSliceGenerator implements WorldSliceGenerator {
         spawnCandidate: spawnCandidates[0] ?? {
           id: "spawn-chunk-0-0",
           chunkId: chunks[0]?.id ?? "chunk-0-0",
+          roadId: roads[0]?.id ?? "road-0",
           position: { x: 0, y: 0, z: 0 },
-          headingDegrees: 90
+          headingDegrees: 90,
+          surface: "road",
+          laneIndex: 0,
+          starterVehicle: createStarterVehicleSpawnPlan()
         }
       };
     } catch (error) {

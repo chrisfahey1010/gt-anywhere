@@ -12,7 +12,11 @@ import {
   type LocationResolveFailure,
   type WorldGenerationRequest
 } from "../../world/generation/location-resolver";
-import { createWorldLoadFailure, type WorldLoadFailure } from "../../world/generation/world-load-failure";
+import {
+  createWorldLoadFailure,
+  isWorldSceneRuntimeError,
+  type WorldLoadFailure
+} from "../../world/generation/world-load-failure";
 import { DefaultWorldSliceGenerator, type WorldSliceGenerator } from "../../world/generation/world-slice-generator";
 import type { SliceManifest } from "../../world/chunks/slice-manifest";
 import type { WorldSceneHandle, WorldSceneLoader } from "../../rendering/scene/create-world-scene";
@@ -55,6 +59,16 @@ function createUnexpectedResolveFailure(query: string): LocationResolveFailure {
 }
 
 function createSceneLoadFailure(request: WorldGenerationRequest, error: unknown): WorldLoadFailure {
+  if (isWorldSceneRuntimeError(error)) {
+    return createWorldLoadFailure(
+      error.failureCode,
+      error.failureStage,
+      error.message,
+      request.location.placeName,
+      error.failureDetails
+    );
+  }
+
   return createWorldLoadFailure(
     "WORLD_SCENE_LOAD_FAILED",
     "world-loading",
@@ -233,12 +247,14 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
         type: "world.scene.ready",
         request,
         manifest,
-        durationMs: readyDurationMs
+        durationMs: readyDurationMs,
+        readinessMilestone: "controllable-vehicle"
       });
       logger.info("world.scene.ready", {
         placeName: request.location.placeName,
         sliceId: manifest.sliceId,
-        durationMs: readyDurationMs
+        durationMs: readyDurationMs,
+        readinessMilestone: "controllable-vehicle"
       });
 
       state = transitionSessionState(state, { type: "world.scene.ready" });

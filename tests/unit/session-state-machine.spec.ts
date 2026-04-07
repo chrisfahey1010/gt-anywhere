@@ -53,8 +53,20 @@ describe("session state machine", () => {
       {
         id: "spawn-0",
         chunkId: "chunk-0-0",
+        roadId: "market-st",
         position: { x: -20, y: 0, z: -20 },
-        headingDegrees: 90
+        headingDegrees: 90,
+        surface: "road",
+        laneIndex: 0,
+        starterVehicle: {
+          kind: "starter-car",
+          placement: "lane-center",
+          dimensions: {
+            width: 2.2,
+            height: 1.6,
+            length: 4.6
+          }
+        }
       }
     ],
     sceneMetadata: {

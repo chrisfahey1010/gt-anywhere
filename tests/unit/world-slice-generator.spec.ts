@@ -115,10 +115,91 @@ describe("world slice generator", () => {
       }
     });
     expect(result.spawnCandidate.id).toMatch(/^spawn-/);
+    expect(result.spawnCandidate).toMatchObject({
+      roadId: "market-st",
+      surface: "road",
+      laneIndex: 0,
+      starterVehicle: {
+        kind: "starter-car",
+        placement: "lane-center",
+        dimensions: {
+          width: 2.2,
+          height: 1.6,
+          length: 4.6
+        }
+      }
+    });
+    expect(result.spawnCandidate).not.toHaveProperty("runtimeState");
     expect(manifestStore.getBySliceId(result.manifest.sliceId)).toEqual(result.manifest);
     expect(manifestStore.getByReuseKey("san-francisco-ca")).toEqual(result.manifest);
     expect(generator.getStoredManifest?.(result.manifest.sliceId)).toEqual(result.manifest);
     expect(generator.getStoredManifestByReuseKey?.("san-francisco-ca")).toEqual(result.manifest);
+  });
+
+  it("aligns the starter spawn heading to the selected road segment instead of using a fixed fallback", async () => {
+    const generator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: createPresetSource(),
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const request = await createRequest(validLocationAliasQuery);
+    const result = await generator.generate(request);
+
+    expect(result.ok).toBe(true);
+
+    if (!result.ok) {
+      return;
+    }
+
+    const expectedHeadingDegrees = (Math.atan2(560, 400) * 180) / Math.PI;
+
+    expect(result.spawnCandidate.headingDegrees).toBeCloseTo(expectedHeadingDegrees, 5);
+    expect(result.spawnCandidate.position).not.toEqual({ x: -280, y: 0, z: -200 });
+    expect(result.spawnCandidate.position.x).toBeGreaterThan(-280);
+    expect(result.spawnCandidate.position.z).toBeGreaterThan(-200);
+  });
+
+  it("keeps the starter spawn inset from road ends and slice bounds for the car footprint", async () => {
+    const generator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: createPresetSource(),
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const request = await createRequest(validLocationAliasQuery);
+    const result = await generator.generate(request);
+
+    expect(result.ok).toBe(true);
+
+    if (!result.ok) {
+      return;
+    }
+
+    const road = result.manifest.roads.find((candidate) => candidate.id === result.spawnCandidate.roadId);
+
+    expect(road).toBeDefined();
+
+    if (!road) {
+      return;
+    }
+
+    const [start, end] = road.points;
+
+    expect(start).toBeDefined();
+    expect(end).toBeDefined();
+
+    if (!start || !end) {
+      return;
+    }
+
+    const { position, starterVehicle } = result.spawnCandidate;
+    const startDistance = Math.hypot(position.x - start.x, position.z - start.z);
+    const endDistance = Math.hypot(end.x - position.x, end.z - position.z);
+    const minimumClearance = starterVehicle.dimensions.length;
+
+    expect(startDistance).toBeGreaterThanOrEqual(minimumClearance);
+    expect(endDistance).toBeGreaterThanOrEqual(minimumClearance);
+    expect(position.x).toBeGreaterThan(result.manifest.bounds.minX + starterVehicle.dimensions.length / 2);
+    expect(position.x).toBeLessThan(result.manifest.bounds.maxX - starterVehicle.dimensions.length / 2);
+    expect(position.z).toBeGreaterThan(result.manifest.bounds.minZ + starterVehicle.dimensions.length / 2);
+    expect(position.z).toBeLessThan(result.manifest.bounds.maxZ - starterVehicle.dimensions.length / 2);
   });
 
   it("maps canonical aliases onto the same deterministic slice definition", async () => {
