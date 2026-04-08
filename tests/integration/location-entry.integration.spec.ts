@@ -160,6 +160,171 @@ describe("location entry integration", () => {
     expect(inputAfterEdit.value).toBe("San Francisco, CA");
   });
 
+  it("shows same-location replay options only in world-ready and normalizes each launch into one replay selection contract", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const { sliceGenerator } = createSuccessfulWorldDependencies();
+    const sceneLoadRecords: Array<{
+      replaySelection: { id: string; kind: string; label: string; starterVehicleType: string } | null;
+      starterVehicleType: string | null;
+    }> = [];
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost, replaySelection, starterVehicleType }) => {
+        sceneLoadRecords.push({
+          replaySelection: replaySelection
+            ? {
+                id: replaySelection.id,
+                kind: replaySelection.kind,
+                label: replaySelection.label,
+                starterVehicleType: replaySelection.starterVehicleType
+              }
+            : null,
+          starterVehicleType: starterVehicleType ?? null
+        });
+        renderHost.innerHTML = '<div data-testid="world-ready-scene">Fake world scene</div>';
+
+        return {
+          canvas: document.createElement("canvas"),
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+    const app = await createGameApp({
+      host,
+      sliceGenerator,
+      sceneLoader,
+      clock: () => "2026-04-07T00:00:00.000Z"
+    });
+
+    expect(host.querySelector('[data-testid="replay-vehicle-sedan"]')).toBeNull();
+    expect(host.querySelector('[data-testid="replay-intention-precision"]')).toBeNull();
+
+    const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationAliasQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    await app.whenIdle();
+
+    const precisionReplay = host.querySelector('[data-testid="replay-intention-precision"]') as HTMLButtonElement;
+
+    expect(app.getSnapshot().phase).toBe("world-ready");
+    expect(host.querySelector('[data-testid="replay-vehicle-sedan"]')).not.toBeNull();
+    expect(precisionReplay).not.toBeNull();
+    expect(app.getSnapshot().replaySelection).toBeNull();
+
+    precisionReplay.click();
+    await app.whenIdle();
+
+    expect(app.getSnapshot().phase).toBe("world-ready");
+    expect(app.getSnapshot().replaySelection).toMatchObject({
+      id: "intention-precision",
+      kind: "intention",
+      label: "Precision",
+      starterVehicleType: "sports-car"
+    });
+    expect(sceneLoadRecords).toEqual([
+      {
+        replaySelection: null,
+        starterVehicleType: null
+      },
+      {
+        replaySelection: {
+          id: "intention-precision",
+          kind: "intention",
+          label: "Precision",
+          starterVehicleType: "sports-car"
+        },
+        starterVehicleType: "sports-car"
+      }
+    ]);
+  });
+
+  it("reuses the cached manifest and stable place identity when replaying the same location", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const manifestStoreById = new Map<string, SliceManifest>();
+    const manifestStoreByReuseKey = new Map<string, SliceManifest>();
+    const baseResolver = new LocationResolver();
+    const sceneLoadRecords: Array<{
+      manifest: SliceManifest;
+      replaySelectionId: string | null;
+    }> = [];
+    let resolveCalls = 0;
+    let generateCalls = 0;
+    const resolver: Pick<LocationResolver, "resolve"> = {
+      resolve: async (query) => {
+        resolveCalls += 1;
+        return baseResolver.resolve(query);
+      }
+    };
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => {
+        generateCalls += 1;
+        manifestStoreById.set(manifest.sliceId, manifest);
+        manifestStoreByReuseKey.set(manifest.location.reuseKey, manifest);
+
+        return {
+          ok: true,
+          manifest,
+          spawnCandidate: manifest.spawnCandidates[0]
+        };
+      },
+      getStoredManifest: (sliceId) => manifestStoreById.get(sliceId) ?? null,
+      getStoredManifestByReuseKey: (reuseKey) => manifestStoreByReuseKey.get(reuseKey) ?? null
+    };
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost, manifest, replaySelection }) => {
+        sceneLoadRecords.push({
+          manifest,
+          replaySelectionId: replaySelection?.id ?? null
+        });
+        renderHost.innerHTML = '<div data-testid="world-ready-scene">Fake world scene</div>';
+
+        return {
+          canvas: document.createElement("canvas"),
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+    const app = await createGameApp({
+      host,
+      resolver: resolver as LocationResolver,
+      sliceGenerator,
+      sceneLoader,
+      clock: () => "2026-04-07T00:00:00.000Z"
+    });
+    const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationAliasQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    await app.whenIdle();
+
+    (host.querySelector('[data-testid="replay-vehicle-heavy-truck"]') as HTMLButtonElement).click();
+    await app.whenIdle();
+
+    expect(app.getSnapshot().phase).toBe("world-ready");
+    expect(resolveCalls).toBe(1);
+    expect(generateCalls).toBe(1);
+    expect(manifestStoreById.size).toBe(1);
+    expect(manifestStoreByReuseKey.size).toBe(1);
+    expect(app.getSnapshot().sliceManifest?.sliceId).toBe(manifest.sliceId);
+    expect(app.getSnapshot().handoff?.location.reuseKey).toBe(manifest.location.reuseKey);
+    expect(sceneLoadRecords).toHaveLength(2);
+    expect(sceneLoadRecords[0]?.manifest).toBe(sceneLoadRecords[1]?.manifest);
+    expect(sceneLoadRecords[0]?.replaySelectionId).toBeNull();
+    expect(sceneLoadRecords[1]?.replaySelectionId).toBe("vehicle-heavy-truck");
+  });
+
   it("offers restart from spawn in world-ready and does not resolve the location again", async () => {
     document.body.innerHTML = '<div id="app"></div>';
 

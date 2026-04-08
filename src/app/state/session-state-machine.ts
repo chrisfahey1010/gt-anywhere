@@ -1,3 +1,4 @@
+import type { ReplaySelection } from "../config/replay-options";
 import type {
   LocationResolveFailure,
   SessionLocationIdentity,
@@ -24,6 +25,7 @@ export type SessionError = LocationResolveFailure | WorldLoadFailure;
 export interface SessionState {
   phase: SessionPhase;
   formQuery: string;
+  replaySelection: ReplaySelection | null;
   sessionIdentity: SessionLocationIdentity | null;
   handoff: WorldGenerationRequest | null;
   sliceManifest: SliceManifest | null;
@@ -36,6 +38,7 @@ export type SessionEvent =
   | { type: "location.submit.requested"; query: string }
   | { type: "location.edit.requested" }
   | { type: "world.restart.requested" }
+  | { type: "world.replay.requested"; selection: ReplaySelection }
   | { type: "world.retry.requested" }
   | {
       type: "location.resolve.succeeded";
@@ -56,6 +59,7 @@ export function createInitialSessionState(): SessionState {
   return {
     phase: "boot",
     formQuery: "",
+    replaySelection: null,
     sessionIdentity: null,
     handoff: null,
     sliceManifest: null,
@@ -78,6 +82,7 @@ export function transitionSessionState(state: SessionState, event: SessionEvent)
         ...state,
         phase: "location-resolving",
         formQuery: normalizeLocationQuery(event.query),
+        replaySelection: null,
         handoff: null,
         sliceManifest: null,
         spawnCandidate: null,
@@ -90,6 +95,7 @@ export function transitionSessionState(state: SessionState, event: SessionEvent)
         ...state,
         phase: "world-generation-requested",
         formQuery: event.identity.placeName,
+        replaySelection: null,
         sessionIdentity: event.identity,
         handoff: event.handoff,
         sliceManifest: null,
@@ -136,6 +142,19 @@ export function transitionSessionState(state: SessionState, event: SessionEvent)
       return {
         ...state,
         phase: "world-restarting",
+        replaySelection: null,
+        error: null
+      };
+
+    case "world.replay.requested":
+      if (state.phase !== "world-ready") {
+        return state;
+      }
+
+      return {
+        ...state,
+        phase: "world-restarting",
+        replaySelection: event.selection,
         error: null
       };
 
@@ -151,6 +170,7 @@ export function transitionSessionState(state: SessionState, event: SessionEvent)
       return {
         ...state,
         phase: "location-select",
+        replaySelection: null,
         sessionIdentity: null,
         handoff: null,
         sliceManifest: null,

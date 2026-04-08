@@ -331,4 +331,201 @@ describe("app bootstrap smoke", () => {
     expect(marker.getAttribute("cx")).not.toBe(firstMarkerX);
     expect(marker.getAttribute("cy")).not.toBe(firstMarkerY);
   });
+
+  it("replays into the selected starter vehicle, refreshes HUD state, and keeps plain restart on the baseline path", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const eventBus = new GameEventBus();
+    let readyCount = 0;
+    let activeSceneCanvas: HTMLCanvasElement | null = null;
+    let loadCount = 0;
+    const loadRecords: Array<{ replaySelectionId: string | null; starterVehicleType: string | null }> = [];
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => ({
+        ok: true,
+        manifest,
+        spawnCandidate: manifest.spawnCandidates[0]
+      })
+    };
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost, replaySelection, starterVehicleType }) => {
+        loadCount += 1;
+        loadRecords.push({
+          replaySelectionId: replaySelection?.id ?? null,
+          starterVehicleType: starterVehicleType ?? null
+        });
+
+        const canvas = document.createElement("canvas");
+        canvas.dataset.readyMilestone = "controllable-vehicle";
+        canvas.dataset.possessionMode = "vehicle";
+        canvas.dataset.activeCamera = "starter-vehicle-camera";
+        canvas.dataset.activeVehicleType = starterVehicleType ?? "sedan";
+        canvas.dataset.testid = "world-scene-canvas";
+        renderHost.replaceChildren(canvas);
+        activeSceneCanvas = canvas;
+
+        const navigationSnapshot: WorldNavigationSnapshot =
+          loadCount === 1
+            ? {
+                actor: {
+                  position: { x: 20, y: 1.7, z: -16 },
+                  facingYaw: Math.PI / 2,
+                  possessionMode: "vehicle"
+                },
+                bounds: manifest.bounds,
+                districtName: "Downtown",
+                locationName: "San Francisco, CA",
+                roads: [
+                  {
+                    id: "market-st",
+                    displayName: "Market Street",
+                    kind: "primary",
+                    width: 18,
+                    points: [
+                      { x: -280, z: -220 },
+                      { x: 280, z: 220 }
+                    ]
+                  }
+                ],
+                streetLabel: "Market Street"
+              }
+            : loadCount === 2
+              ? {
+                  actor: {
+                    position: { x: -24, y: 1.7, z: 18 },
+                    facingYaw: 0,
+                    possessionMode: "vehicle"
+                  },
+                  bounds: manifest.bounds,
+                  districtName: "Downtown",
+                  locationName: "San Francisco, CA",
+                  roads: [
+                    {
+                      id: "mission-st",
+                      displayName: "Mission Street",
+                      kind: "secondary",
+                      width: 14,
+                      points: [
+                        { x: -240, z: -40 },
+                        { x: 240, z: 40 }
+                      ]
+                    }
+                  ],
+                  streetLabel: "Mission Street"
+                }
+              : {
+                  actor: {
+                    position: { x: 16, y: 1.7, z: 10 },
+                    facingYaw: Math.PI / 4,
+                    possessionMode: "vehicle"
+                  },
+                  bounds: manifest.bounds,
+                  districtName: "Downtown",
+                  locationName: "San Francisco, CA",
+                  roads: [
+                    {
+                      id: "battery-st",
+                      displayName: "Battery Street",
+                      kind: "tertiary",
+                      width: 12,
+                      points: [
+                        { x: -180, z: -60 },
+                        { x: 180, z: 60 }
+                      ]
+                    }
+                  ],
+                  streetLabel: "Battery Street"
+                };
+
+        return {
+          canvas,
+          subscribeNavigation: (listener) => {
+            listener(navigationSnapshot);
+
+            return () => {};
+          },
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+
+    eventBus.on("world.scene.ready", () => {
+      readyCount += 1;
+    });
+
+    const app = await createGameApp({ host, eventBus, sliceGenerator, sceneLoader });
+    const input = host.querySelector("input") as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await app.whenIdle();
+
+    if (activeSceneCanvas === null) {
+      throw new Error("Expected initial scene canvas to be created");
+    }
+
+    const hud = host.querySelector('[data-testid="world-navigation-hud"]') as HTMLElement;
+    const initialCanvas = activeSceneCanvas as HTMLCanvasElement;
+
+    expect(initialCanvas.dataset.activeVehicleType).toBe("sedan");
+    expect(hud.textContent).toContain("Market Street");
+
+    initialCanvas.dataset.possessionMode = "on-foot";
+    initialCanvas.dataset.activeCamera = "on-foot-camera";
+
+    (host.querySelector('[data-testid="replay-vehicle-heavy-truck"]') as HTMLButtonElement).click();
+    await app.whenIdle();
+
+    if (activeSceneCanvas === null) {
+      throw new Error("Expected replay scene canvas to be created");
+    }
+
+    const replayCanvas = activeSceneCanvas as HTMLCanvasElement;
+
+    expect(replayCanvas).not.toBe(initialCanvas);
+    expect(replayCanvas.dataset.readyMilestone).toBe("controllable-vehicle");
+    expect(replayCanvas.dataset.possessionMode).toBe("vehicle");
+    expect(replayCanvas.dataset.activeCamera).toBe("starter-vehicle-camera");
+    expect(replayCanvas.dataset.activeVehicleType).toBe("heavy-truck");
+    expect(hud.textContent).toContain("Mission Street");
+    expect(app.getSnapshot().replaySelection).toMatchObject({
+      id: "vehicle-heavy-truck"
+    });
+
+    (host.querySelector('[data-testid="restart-from-spawn"]') as HTMLButtonElement).click();
+    await app.whenIdle();
+
+    if (activeSceneCanvas === null) {
+      throw new Error("Expected restarted scene canvas to be created");
+    }
+
+    const restartedCanvas = activeSceneCanvas as HTMLCanvasElement;
+
+    expect(app.getSnapshot().phase).toBe("world-ready");
+    expect(app.getSnapshot().replaySelection).toBeNull();
+    expect(restartedCanvas.dataset.readyMilestone).toBe("controllable-vehicle");
+    expect(restartedCanvas.dataset.possessionMode).toBe("vehicle");
+    expect(restartedCanvas.dataset.activeCamera).toBe("starter-vehicle-camera");
+    expect(restartedCanvas.dataset.activeVehicleType).toBe("sedan");
+    expect(hud.textContent).toContain("Battery Street");
+    expect(loadRecords).toEqual([
+      {
+        replaySelectionId: null,
+        starterVehicleType: null
+      },
+      {
+        replaySelectionId: "vehicle-heavy-truck",
+        starterVehicleType: "heavy-truck"
+      },
+      {
+        replaySelectionId: null,
+        starterVehicleType: null
+      }
+    ]);
+    expect(readyCount).toBe(3);
+  });
 });

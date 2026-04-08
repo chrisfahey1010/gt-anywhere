@@ -376,4 +376,81 @@ describe("world navigation hud integration", () => {
     expect(marker.getAttribute("cx")).not.toBe(vehicleMarkerX);
     expect(marker.getAttribute("cy")).not.toBe(vehicleMarkerY);
   });
+
+  it("hides the HUD and removes replay controls if a replay launch fails", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => ({
+        ok: true,
+        manifest,
+        spawnCandidate: manifest.spawnCandidates[0]
+      })
+    };
+    let loadCount = 0;
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost }) => {
+        loadCount += 1;
+
+        if (loadCount === 2) {
+          throw new Error("replay bootstrap failed");
+        }
+
+        renderHost.innerHTML = '<div data-testid="world-ready-scene">Fake world scene</div>';
+
+        return {
+          canvas: document.createElement("canvas"),
+          subscribeNavigation: (listener) => {
+            listener({
+              actor: {
+                position: { x: 24, y: 1.7, z: 12 },
+                facingYaw: Math.PI / 2,
+                possessionMode: "vehicle"
+              },
+              bounds: manifest.bounds,
+              districtName: "Downtown",
+              locationName: "San Francisco, CA",
+              roads: [
+                {
+                  id: "market-st",
+                  displayName: "Market Street",
+                  kind: "primary",
+                  width: 18,
+                  points: [
+                    { x: -280, z: -120 },
+                    { x: 280, z: 120 }
+                  ]
+                }
+              ],
+              streetLabel: "Market Street"
+            });
+
+            return () => {};
+          },
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+    const app = await createGameApp({ host, sliceGenerator, sceneLoader });
+    const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationAliasQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await app.whenIdle();
+
+    (host.querySelector('[data-testid="replay-intention-chaos"]') as HTMLButtonElement).click();
+    await app.whenIdle();
+
+    const hud = host.querySelector('[data-testid="world-navigation-hud"]') as HTMLElement;
+
+    expect(app.getSnapshot().phase).toBe("world-load-error");
+    expect(host.textContent).toContain("Retry load");
+    expect(hud.hidden).toBe(true);
+    expect(host.querySelector('[data-testid="same-location-replay-launcher"]')).toBeNull();
+    expect(host.querySelector('[data-testid="active-replay-selection"]')).toBeNull();
+  });
 });

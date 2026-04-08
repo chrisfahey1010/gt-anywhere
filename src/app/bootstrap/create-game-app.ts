@@ -1,4 +1,5 @@
 import { GameEventBus } from "../events/game-events";
+import type { ReplaySelection } from "../config/replay-options";
 import { createLogger, type Logger } from "../logging/logger";
 import {
   createInitialSessionState,
@@ -118,6 +119,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     host: shellHost,
     onSubmit: handleSubmit,
     onEdit: handleEdit,
+    onReplay: handleReplay,
     onRestart: handleRestart,
     onRetry: handleRetry
   });
@@ -232,6 +234,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     request: WorldGenerationRequest,
     manifest: SliceManifest,
     spawnCandidate: SpawnCandidate,
+    replaySelection: ReplaySelection | null,
     startedAtMs: number,
     loadId: number
   ): Promise<void> => {
@@ -242,7 +245,9 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
       worldScene = await activeSceneLoader.load({
         renderHost,
         manifest,
-        spawnCandidate
+        replaySelection,
+        spawnCandidate,
+        starterVehicleType: replaySelection?.starterVehicleType
       });
 
       removeNavigationSubscription =
@@ -300,7 +305,10 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     return { manifest, spawnCandidate };
   };
 
-  const runGeneratedWorldLoad = async (request: WorldGenerationRequest): Promise<void> => {
+  const runGeneratedWorldLoad = async (
+    request: WorldGenerationRequest,
+    replaySelection: ReplaySelection | null
+  ): Promise<void> => {
     const { startedAtMs, loadId } = beginLoadAttempt();
 
     eventBus.emit({ type: "world.generation.started", request });
@@ -327,12 +335,13 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     const manifest = getStoredManifest(sliceGenerator, result.manifest);
 
     emitManifestReady(request, manifest, result.spawnCandidate, startedAtMs);
-    await loadWorldScene(request, manifest, result.spawnCandidate, startedAtMs, loadId);
+    await loadWorldScene(request, manifest, result.spawnCandidate, replaySelection, startedAtMs, loadId);
   };
 
   const runCachedWorldLoad = async (
     request: WorldGenerationRequest,
-    cachedWorldLoadData: CachedWorldLoadData
+    cachedWorldLoadData: CachedWorldLoadData,
+    replaySelection: ReplaySelection | null
   ): Promise<void> => {
     const { startedAtMs, loadId } = beginLoadAttempt();
 
@@ -341,6 +350,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
       request,
       cachedWorldLoadData.manifest,
       cachedWorldLoadData.spawnCandidate,
+      replaySelection,
       startedAtMs,
       loadId
     );
@@ -367,7 +377,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     });
     render();
 
-    await runGeneratedWorldLoad(handoff);
+    await runGeneratedWorldLoad(handoff, null);
   };
 
   const finishFailure = (query: string, failure: LocationResolveFailure): void => {
@@ -404,7 +414,11 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     state = transitionSessionState(state, { type: "world.retry.requested" });
     render();
 
-    settlePendingWork(cachedWorldLoadData === null ? runGeneratedWorldLoad(request) : runCachedWorldLoad(request, cachedWorldLoadData));
+    settlePendingWork(
+      cachedWorldLoadData === null
+        ? runGeneratedWorldLoad(request, state.replaySelection)
+        : runCachedWorldLoad(request, cachedWorldLoadData, state.replaySelection)
+    );
   }
 
   function handleRestart(): void {
@@ -422,7 +436,25 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     state = transitionSessionState(state, { type: "world.restart.requested" });
     render();
 
-    settlePendingWork(runCachedWorldLoad(request, cachedWorldLoadData));
+    settlePendingWork(runCachedWorldLoad(request, cachedWorldLoadData, null));
+  }
+
+  function handleReplay(selection: ReplaySelection): void {
+    if (state.phase !== "world-ready" || state.handoff === null) {
+      return;
+    }
+
+    const request = state.handoff;
+    const cachedWorldLoadData = resolveCachedWorldLoadData();
+
+    if (cachedWorldLoadData === null) {
+      return;
+    }
+
+    state = transitionSessionState(state, { type: "world.replay.requested", selection });
+    render();
+
+    settlePendingWork(runCachedWorldLoad(request, cachedWorldLoadData, selection));
   }
 
   function handleSubmit(query: string): void {

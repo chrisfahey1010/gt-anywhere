@@ -2,6 +2,7 @@ import {
   createInitialSessionState,
   transitionSessionState
 } from "../../src/app/state/session-state-machine";
+import { getReplaySelectionById } from "../../src/app/config/replay-options";
 import type { SliceManifest } from "../../src/world/chunks/slice-manifest";
 import {
   LocationResolver,
@@ -305,6 +306,59 @@ describe("session state machine", () => {
     expect(restartedState.sliceManifest).toBe(manifest);
     expect(restartedState.spawnCandidate).toBe(manifest.spawnCandidates[0]);
     expect(restartedState.error).toBeNull();
+  });
+
+  it("tracks replay launch metadata separately from plain restart semantics", () => {
+    const replaySelection = getReplaySelectionById("intention-chaos");
+
+    if (replaySelection === null) {
+      throw new Error("Expected replay selection to exist");
+    }
+
+    const handoff = createWorldGenerationRequest(
+      {
+        query: "San Francisco, CA",
+        normalizedQuery: "san francisco, ca",
+        placeName: "San Francisco, CA",
+        sessionKey: "san-francisco-ca-story-1-1",
+        reuseKey: "san-francisco-ca"
+      },
+      () => "2026-04-07T00:00:00.000Z"
+    );
+    const readyState = transitionSessionState(
+      transitionSessionState(
+        transitionSessionState(createInitialSessionState(), {
+          type: "location.resolve.succeeded",
+          identity: handoff.location,
+          handoff
+        }),
+        {
+          type: "world.manifest.ready",
+          manifest,
+          spawnCandidate: manifest.spawnCandidates[0]
+        }
+      ),
+      { type: "world.scene.ready" }
+    );
+
+    const replayRestartState = transitionSessionState(readyState, {
+      type: "world.replay.requested",
+      selection: replaySelection
+    });
+    const replayReadyState = transitionSessionState(replayRestartState, {
+      type: "world.scene.ready"
+    });
+    const baselineRestartState = transitionSessionState(replayReadyState, {
+      type: "world.restart.requested"
+    });
+
+    expect(replayRestartState.phase).toBe("world-restarting");
+    expect(replayRestartState.replaySelection).toEqual(replaySelection);
+    expect(replayRestartState.sessionIdentity).toEqual(readyState.sessionIdentity);
+    expect(replayRestartState.handoff).toEqual(handoff);
+    expect(replayReadyState.replaySelection).toEqual(replaySelection);
+    expect(baselineRestartState.phase).toBe("world-restarting");
+    expect(baselineRestartState.replaySelection).toBeNull();
   });
 
   it("normalizes valid queries and returns typed recoverable failures for invalid ones", () => {

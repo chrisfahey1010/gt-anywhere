@@ -46,9 +46,20 @@ import {
   syncWorldSceneTelemetry,
   type WorldNavigationSnapshot
 } from "./world-scene-runtime";
+import {
+  REPLAY_VEHICLE_TYPES,
+  type ReplaySelection,
+  type ReplayStarterVehicleType
+} from "../../app/config/replay-options";
 
-const AVAILABLE_VEHICLE_TYPES = ["sedan", "sports-car", "heavy-truck"] as const;
+const AVAILABLE_VEHICLE_TYPES = REPLAY_VEHICLE_TYPES;
 const DEFAULT_VEHICLE_TYPE = AVAILABLE_VEHICLE_TYPES[0];
+
+export function resolveSceneStarterVehicleType(
+  starterVehicleType?: ReplayStarterVehicleType | null
+): ReplayStarterVehicleType {
+  return starterVehicleType ?? DEFAULT_VEHICLE_TYPE;
+}
 
 export interface WorldSceneHandle {
   canvas: HTMLCanvasElement;
@@ -62,7 +73,9 @@ export interface WorldSceneHandle {
 export interface CreateWorldSceneOptions {
   renderHost: HTMLElement;
   manifest: SliceManifest;
+  replaySelection?: ReplaySelection | null;
   spawnCandidate: SpawnCandidate;
+  starterVehicleType?: ReplayStarterVehicleType;
 }
 
 export interface WorldSceneLoader {
@@ -253,7 +266,8 @@ function createHijackableSpawnCandidate(
 
 export class BabylonWorldSceneLoader implements WorldSceneLoader {
   async load(options: CreateWorldSceneOptions): Promise<WorldSceneHandle> {
-    const { renderHost, manifest, spawnCandidate } = options;
+    const { renderHost, manifest, spawnCandidate, starterVehicleType } = options;
+    const initialStarterVehicleType = resolveSceneStarterVehicleType(starterVehicleType);
     const canvas = document.createElement("canvas");
     canvas.className = "world-canvas";
     canvas.setAttribute("aria-label", `${manifest.location.placeName} world view`);
@@ -366,9 +380,9 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     let hijackableVehicles: ManagedVehicleRuntime[] = [];
 
     try {
-      const defaultTuning = await loadTuningProfile(DEFAULT_VEHICLE_TYPE);
+      const defaultTuning = await loadTuningProfile(initialStarterVehicleType);
       const activeVehicle = createManagedVehicleRuntime({
-        vehicleType: DEFAULT_VEHICLE_TYPE,
+        vehicleType: initialStarterVehicleType,
         tuning: defaultTuning,
         runtime: createVehicleFactory({
           scene,
