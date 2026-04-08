@@ -1,7 +1,7 @@
 import { MeshBuilder, Scene, TransformNode, Vector3 } from "@babylonjs/core";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { syncWorldSceneTelemetry } from "../../src/rendering/scene/world-scene-runtime";
+import { createWorldNavigationSnapshot, syncWorldSceneTelemetry } from "../../src/rendering/scene/world-scene-runtime";
 import { createOnFootCamera } from "../../src/sandbox/on-foot/create-on-foot-camera";
 import { createPlayerPossessionRuntime } from "../../src/sandbox/on-foot/player-possession-runtime";
 import { createStarterVehicleCamera } from "../../src/vehicles/cameras/create-starter-vehicle-camera";
@@ -94,7 +94,59 @@ describe("world scene possession smoke", () => {
     const canvas = document.createElement("canvas");
     const spawnPoint = vehicleMesh.position.clone();
     let onFootCamera = null as ReturnType<typeof createOnFootCamera> | null;
+    let previousActorId: string | undefined;
+    let previousRoadId: string | undefined;
     scene.metadata = {};
+
+    const readNavigationSnapshot = () => {
+      const result = createWorldNavigationSnapshot({
+        activeVehicle: vehicleRuntime,
+        manifest: {
+          bounds: {
+            minX: -20,
+            maxX: 20,
+            minZ: -20,
+            maxZ: 20
+          },
+          roads: [
+            {
+              id: "market-st",
+              displayName: "Market Street",
+              kind: "primary",
+              width: 18,
+              points: [
+                { x: -18, y: 0, z: 0 },
+                { x: 18, y: 0, z: 0 }
+              ]
+            },
+            {
+              id: "van-ness-ave",
+              displayName: "Van Ness Avenue",
+              kind: "secondary",
+              width: 14,
+              points: [
+                { x: 0, y: 0, z: -18 },
+                { x: 0, y: 0, z: 18 }
+              ]
+            }
+          ],
+          sceneMetadata: {
+            displayName: "San Francisco, CA",
+            districtName: "Downtown"
+          }
+        },
+        onFootActor: possessionRuntime.getOnFootRuntime(),
+        onFootFacingYaw: possessionRuntime.getFacingYaw(),
+        possessionMode: possessionRuntime.getMode(),
+        previousActorId,
+        previousRoadId
+      });
+
+      previousActorId = result.currentActorId;
+      previousRoadId = result.currentRoadId ?? undefined;
+
+      return result.snapshot;
+    };
 
     const syncTelemetry = () => {
       syncWorldSceneTelemetry({
@@ -112,6 +164,12 @@ describe("world scene possession smoke", () => {
     expect(canvas.dataset.readyMilestone).toBeUndefined();
     expect(canvas.dataset.possessionMode).toBe("vehicle");
     expect(canvas.dataset.activeCamera).toBe("starter-vehicle-camera");
+    expect(readNavigationSnapshot()).toMatchObject({
+      actor: {
+        possessionMode: "vehicle"
+      },
+      streetLabel: "Market Street"
+    });
 
     window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE" }));
     currentInputFrame = controller.captureInputFrame();
@@ -126,10 +184,21 @@ describe("world scene possession smoke", () => {
       onFootCamera.updateView(possessionRuntime.getFacingYaw(), possessionRuntime.getLookPitch());
     }
 
+    possessionRuntime.getOnFootRuntime()!.mesh.position.copyFromFloats(
+      0,
+      possessionRuntime.getOnFootRuntime()!.mesh.position.y,
+      8
+    );
     syncTelemetry();
     expect(canvas.dataset.possessionMode).toBe("on-foot");
     expect(canvas.dataset.activeCamera).toBe("on-foot-camera");
     expect(canvas.dataset.onFootActorId).toBe("on-foot-actor");
+    expect(readNavigationSnapshot()).toMatchObject({
+      actor: {
+        possessionMode: "on-foot"
+      },
+      streetLabel: "Van Ness Avenue"
+    });
 
     possessionRuntime.getOnFootRuntime()!.mesh.position.copyFromFloats(
       0,
@@ -150,6 +219,12 @@ describe("world scene possession smoke", () => {
     expect(canvas.dataset.possessionMode).toBe("vehicle");
     expect(canvas.dataset.activeCamera).toBe("starter-vehicle-camera");
     expect(canvas.dataset.onFootActorId).toBe("");
+    expect(readNavigationSnapshot()).toMatchObject({
+      actor: {
+        possessionMode: "vehicle"
+      },
+      streetLabel: "Market Street"
+    });
 
     possessionRuntime.dispose();
     controller.dispose();

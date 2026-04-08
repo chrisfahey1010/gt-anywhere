@@ -1,7 +1,7 @@
 import { MeshBuilder, Scene, TransformNode, Vector3 } from "@babylonjs/core";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { syncWorldSceneTelemetry } from "../../src/rendering/scene/world-scene-runtime";
+import { createWorldNavigationSnapshot, syncWorldSceneTelemetry } from "../../src/rendering/scene/world-scene-runtime";
 import { createOnFootCamera } from "../../src/sandbox/on-foot/create-on-foot-camera";
 import { createPlayerPossessionRuntime } from "../../src/sandbox/on-foot/player-possession-runtime";
 import { createStarterVehicleCamera } from "../../src/vehicles/cameras/create-starter-vehicle-camera";
@@ -157,7 +157,59 @@ describe("vehicle hijack restart smoke", () => {
       });
       const spawnPoint = starterVehicle.mesh.position.clone();
       let onFootCamera = null as ReturnType<typeof createOnFootCamera> | null;
+      let previousActorId: string | undefined;
+      let previousRoadId: string | undefined;
       scene.metadata = {};
+
+      const readNavigationSnapshot = () => {
+        const result = createWorldNavigationSnapshot({
+          activeVehicle: manager.getActiveVehicle(),
+          manifest: {
+            bounds: {
+              minX: -20,
+              maxX: 20,
+              minZ: -20,
+              maxZ: 20
+            },
+            roads: [
+              {
+                id: "market-st",
+                displayName: "Market Street",
+                kind: "primary",
+                width: 18,
+                points: [
+                  { x: -18, y: 0, z: 0 },
+                  { x: 18, y: 0, z: 0 }
+                ]
+              },
+              {
+                id: "mission-st",
+                displayName: "Mission Street",
+                kind: "secondary",
+                width: 14,
+                points: [
+                  { x: -18, y: 0, z: 2.6 },
+                  { x: 18, y: 0, z: 2.6 }
+                ]
+              }
+            ],
+            sceneMetadata: {
+              displayName: "San Francisco, CA",
+              districtName: "Downtown"
+            }
+          },
+          onFootActor: possessionRuntime.getOnFootRuntime(),
+          onFootFacingYaw: possessionRuntime.getFacingYaw(),
+          possessionMode: possessionRuntime.getMode(),
+          previousActorId,
+          previousRoadId
+        });
+
+        previousActorId = result.currentActorId;
+        previousRoadId = result.currentRoadId ?? undefined;
+
+        return result.snapshot;
+      };
 
       const syncTelemetry = () => {
         syncWorldSceneTelemetry({
@@ -207,6 +259,7 @@ describe("vehicle hijack restart smoke", () => {
         controller,
         hijackableVehicle,
         possessionRuntime,
+        readNavigationSnapshot,
         starterVehicle,
         syncTelemetry,
         updateInputFrame: () => {
@@ -222,6 +275,12 @@ describe("vehicle hijack restart smoke", () => {
     firstSession.syncTelemetry();
     expect(initialCanvas.dataset.possessionMode).toBe("vehicle");
     expect(initialCanvas.dataset.starterVehicleId).toBe(firstSession.starterVehicle.mesh.name);
+    expect(firstSession.readNavigationSnapshot()).toMatchObject({
+      actor: {
+        possessionMode: "vehicle"
+      },
+      streetLabel: "Market Street"
+    });
 
     window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE" }));
     firstSession.updateInputFrame();
@@ -241,6 +300,12 @@ describe("vehicle hijack restart smoke", () => {
     expect(initialCanvas.dataset.activeCamera).toBe("starter-vehicle-camera");
     expect(initialCanvas.dataset.starterVehicleId).toBe(firstSession.hijackableVehicle.mesh.name);
     expect(initialCanvas.dataset.onFootActorId).toBe("");
+    expect(firstSession.readNavigationSnapshot()).toMatchObject({
+      actor: {
+        possessionMode: "vehicle"
+      },
+      streetLabel: "Mission Street"
+    });
 
     firstSession.possessionRuntime.dispose();
     firstSession.controller.dispose();
@@ -256,6 +321,12 @@ describe("vehicle hijack restart smoke", () => {
     expect(restartedCanvas.dataset.starterVehicleId).toBe(restartedSession.starterVehicle.mesh.name);
     expect(restartedCanvas.dataset.starterVehicleId).not.toBe(firstSession.hijackableVehicle.mesh.name);
     expect(restartedCanvas.dataset.onFootActorId).toBe("");
+    expect(restartedSession.readNavigationSnapshot()).toMatchObject({
+      actor: {
+        possessionMode: "vehicle"
+      },
+      streetLabel: "Market Street"
+    });
 
     restartedSession.possessionRuntime.dispose();
     restartedSession.controller.dispose();

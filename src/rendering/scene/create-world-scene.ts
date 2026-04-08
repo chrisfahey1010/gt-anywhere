@@ -40,8 +40,11 @@ import {
 import { createVehicleFactory, loadTuningProfile } from "../../vehicles/physics/vehicle-factory";
 import {
   canSwitchControlledVehicle,
+  createWorldNavigationRoadSnapshots,
+  createWorldNavigationSnapshot,
   sanitizeWorldRuntimeInputFrame,
-  syncWorldSceneTelemetry
+  syncWorldSceneTelemetry,
+  type WorldNavigationSnapshot
 } from "./world-scene-runtime";
 
 const AVAILABLE_VEHICLE_TYPES = ["sedan", "sports-car", "heavy-truck"] as const;
@@ -51,6 +54,8 @@ export interface WorldSceneHandle {
   canvas: HTMLCanvasElement;
   cycleVehicle?(): Promise<void>;
   dispose(): void;
+  getNavigationSnapshot?(): WorldNavigationSnapshot | null;
+  subscribeNavigation?(listener: (snapshot: WorldNavigationSnapshot) => void): () => void;
   switchVehicle?(vehicleType: string): Promise<void>;
 }
 
@@ -463,6 +468,11 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     let removeVehicleSwitchListener = (): void => {};
     let vehicleSwitchInFlight = false;
     const spawnPoint = new Vector3(spawnCandidate.position.x, spawnCandidate.position.y, spawnCandidate.position.z);
+    let currentActorId: string | null = null;
+    let currentRoadId: string | null = null;
+    let navigationSnapshot: WorldNavigationSnapshot | null = null;
+    const navigationListeners = new Set<(snapshot: WorldNavigationSnapshot) => void>();
+    const navigationRoadSnapshots = createWorldNavigationRoadSnapshots(manifest.roads);
 
     const completeHijack = (nextVehicle: ManagedVehicleRuntime): void => {
       const previousVehicle = vehicleManager.getActiveVehicle();
@@ -582,6 +592,24 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         scene,
         spawnPoint
       });
+
+      const nextNavigationSnapshot = createWorldNavigationSnapshot({
+        activeVehicle: vehicleManager.getActiveVehicle(),
+        manifest,
+        onFootActor: possessionRuntime.getOnFootRuntime(),
+        onFootFacingYaw: possessionRuntime.getFacingYaw(),
+        possessionMode: possessionRuntime.getMode(),
+        previousActorId: currentActorId ?? undefined,
+        previousRoadId: currentRoadId ?? undefined,
+        roadSnapshots: navigationRoadSnapshots
+      });
+
+      currentActorId = nextNavigationSnapshot.currentActorId;
+      currentRoadId = nextNavigationSnapshot.currentRoadId;
+      navigationSnapshot = nextNavigationSnapshot.snapshot;
+      navigationListeners.forEach((listener) => {
+        listener(nextNavigationSnapshot.snapshot);
+      });
     };
 
     try {
@@ -657,6 +685,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       dispose: () => {
         window.removeEventListener("resize", resize);
         scene.unregisterBeforeRender(updateWorldRuntime);
+        navigationListeners.clear();
         removeVehicleSwitchListener();
         controller.dispose();
         possessionRuntime.dispose();
@@ -666,6 +695,18 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         scene.dispose();
         engine.dispose();
         canvas.remove();
+      },
+      getNavigationSnapshot: () => navigationSnapshot,
+      subscribeNavigation: (listener) => {
+        navigationListeners.add(listener);
+
+        if (navigationSnapshot !== null) {
+          listener(navigationSnapshot);
+        }
+
+        return () => {
+          navigationListeners.delete(listener);
+        };
       },
       switchVehicle: switchActiveVehicle
     };

@@ -25,6 +25,7 @@ export type SliceRoadKind = "primary" | "secondary" | "tertiary";
 
 export interface SliceRoad {
   id: string;
+  displayName?: string;
   kind: SliceRoadKind;
   width: number;
   points: SliceVector3[];

@@ -8,6 +8,7 @@ import type {
 import type { SessionLocationIdentity, WorldGenerationRequest } from "./location-resolver";
 import { InMemorySliceManifestStore, type SliceManifestStore } from "./slice-manifest-store";
 import { createWorldLoadFailure, type WorldLoadFailure } from "./world-load-failure";
+import { applyRoadDisplayNames } from "./road-display-name";
 
 interface StoredGeoDataPreset extends GeoDataPreset {
   reuseKey: string;
@@ -357,7 +358,7 @@ export class DefaultWorldSliceGenerator implements WorldSliceGenerator {
       const identity = await runLocationResolver(request);
       const preset = await runGeoDataFetcher(identity, this.geoDataPresetSource);
       const bounds = runSliceBoundaryPlanner(preset);
-      const roads = runPlayabilityPassPipeline(bounds, runRoadNormalizer(bounds, preset));
+      const roads = applyRoadDisplayNames(runPlayabilityPassPipeline(bounds, runRoadNormalizer(bounds, preset)));
       const chunks = runChunkAssembler(bounds, roads);
       const spawnCandidates = runSpawnPlanner(chunks, roads);
       const manifest = createSliceManifest(

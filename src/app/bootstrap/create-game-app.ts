@@ -6,6 +6,7 @@ import {
   type SessionState
 } from "../state/session-state-machine";
 import { LocationEntryScreen } from "../../ui/shell/location-entry-screen";
+import { WorldNavigationHud } from "../../ui/hud/world-navigation-hud";
 import {
   createWorldGenerationRequest,
   LocationResolver,
@@ -81,6 +82,7 @@ function createSceneLoadFailure(request: WorldGenerationRequest, error: unknown)
 }
 
 function createAppHosts(host: HTMLElement): {
+  hudHost: HTMLDivElement;
   renderHost: HTMLDivElement;
   shellHost: HTMLDivElement;
 } {
@@ -91,9 +93,12 @@ function createAppHosts(host: HTMLElement): {
   const shellHost = document.createElement("div");
   shellHost.className = "world-shell-host";
 
-  host.replaceChildren(renderHost, shellHost);
+  const hudHost = document.createElement("div");
+  hudHost.className = "world-hud-host";
 
-  return { renderHost, shellHost };
+  host.replaceChildren(renderHost, hudHost, shellHost);
+
+  return { hudHost, renderHost, shellHost };
 }
 
 interface CachedWorldLoadData {
@@ -108,7 +113,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   const sliceGenerator = options.sliceGenerator ?? new DefaultWorldSliceGenerator();
   const clock = options.clock ?? (() => new Date().toISOString());
   const now = options.now ?? (() => Date.now());
-  const { renderHost, shellHost } = createAppHosts(options.host);
+  const { hudHost, renderHost, shellHost } = createAppHosts(options.host);
   const screen = new LocationEntryScreen({
     host: shellHost,
     onSubmit: handleSubmit,
@@ -116,6 +121,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     onRestart: handleRestart,
     onRetry: handleRetry
   });
+  const navigationHud = new WorldNavigationHud({ host: hudHost });
 
   let state = createInitialSessionState();
   let pendingWork = Promise.resolve();
@@ -123,10 +129,12 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   let worldScene: WorldSceneHandle | null = null;
   let sceneLoader = options.sceneLoader ?? null;
   let sceneLoaderPromise: Promise<WorldSceneLoader> | null = null;
+  let removeNavigationSubscription = (): void => {};
 
   const render = (): void => {
     screen.render(state);
     renderHost.dataset.phase = state.phase;
+    navigationHud.setVisible(state.phase === "world-ready");
   };
 
   const settlePendingWork = (work: Promise<unknown>): void => {
@@ -137,6 +145,9 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   };
 
   const disposeWorldScene = (): void => {
+    removeNavigationSubscription();
+    removeNavigationSubscription = (): void => {};
+    navigationHud.clear();
     worldScene?.dispose();
     worldScene = null;
     renderHost.innerHTML = "";
@@ -233,6 +244,16 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
         manifest,
         spawnCandidate
       });
+
+      removeNavigationSubscription =
+        worldScene.subscribeNavigation?.((snapshot) => {
+          navigationHud.render(snapshot);
+        }) ?? (() => {});
+      const initialNavigationSnapshot = worldScene.getNavigationSnapshot?.();
+
+      if (initialNavigationSnapshot !== undefined) {
+        navigationHud.render(initialNavigationSnapshot);
+      }
 
       if (loadId !== activeLoadId) {
         disposeWorldScene();

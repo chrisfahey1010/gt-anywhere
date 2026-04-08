@@ -1,6 +1,7 @@
 import { createGameApp } from "../../src/app/bootstrap/create-game-app";
 import { GameEventBus } from "../../src/app/events/game-events";
 import type { WorldSceneLoader } from "../../src/rendering/scene/create-world-scene";
+import type { WorldNavigationSnapshot } from "../../src/rendering/scene/world-scene-runtime";
 import type { SliceManifest, SpawnCandidate } from "../../src/world/chunks/slice-manifest";
 import type { WorldSliceGenerator } from "../../src/world/generation/world-slice-generator";
 import { validLocationQuery } from "../fixtures/location-queries";
@@ -32,6 +33,7 @@ describe("app bootstrap smoke", () => {
     roads: [
       {
         id: "market-st",
+        displayName: "Market Street",
         kind: "primary",
         width: 18,
         points: [
@@ -219,5 +221,114 @@ describe("app bootstrap smoke", () => {
     expect(restartedSceneCanvas.dataset.activeCamera).toBe("starter-vehicle-camera");
     expect(readyMilestone).toBe("controllable-vehicle");
     expect(readyCount).toBe(2);
+  });
+
+  it("renders a non-blocking navigation HUD and refreshes its label and marker across restart", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => ({
+        ok: true,
+        manifest,
+        spawnCandidate: manifest.spawnCandidates[0]
+      })
+    };
+    let loadCount = 0;
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost }) => {
+        loadCount += 1;
+        renderHost.innerHTML = '<div data-testid="world-ready-scene">Fake world scene</div>';
+
+        const navigationSnapshot: WorldNavigationSnapshot =
+          loadCount === 1
+            ? {
+                actor: {
+                  position: { x: 20, y: 1.7, z: -16 },
+                  facingYaw: Math.PI / 2,
+                  possessionMode: "vehicle"
+                },
+                bounds: manifest.bounds,
+                districtName: "Downtown",
+                locationName: "San Francisco, CA",
+                roads: [
+                  {
+                    id: "market-st",
+                    displayName: "Market Street",
+                    kind: "primary",
+                    width: 18,
+                    points: [
+                      { x: -280, z: -220 },
+                      { x: 280, z: 220 }
+                    ]
+                  }
+                ],
+                streetLabel: "Market Street"
+              }
+            : {
+                actor: {
+                  position: { x: -24, y: 1.7, z: 18 },
+                  facingYaw: 0,
+                  possessionMode: "vehicle"
+                },
+                bounds: manifest.bounds,
+                districtName: "Downtown",
+                locationName: "San Francisco, CA",
+                roads: [
+                  {
+                    id: "mission-st",
+                    displayName: "Mission Street",
+                    kind: "secondary",
+                    width: 14,
+                    points: [
+                      { x: -240, z: -40 },
+                      { x: 240, z: 40 }
+                    ]
+                  }
+                ],
+                streetLabel: "Mission Street"
+              };
+
+        return {
+          canvas: document.createElement("canvas"),
+          subscribeNavigation: (listener) => {
+            listener(navigationSnapshot);
+
+            return () => {};
+          },
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+
+    const app = await createGameApp({ host, sliceGenerator, sceneLoader });
+    const input = host.querySelector("input") as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await app.whenIdle();
+
+    const hud = host.querySelector('[data-testid="world-navigation-hud"]') as HTMLElement;
+    const marker = hud.querySelector('[data-testid="world-navigation-marker"]') as SVGCircleElement;
+    const firstMarkerX = marker.getAttribute("cx");
+    const firstMarkerY = marker.getAttribute("cy");
+
+    expect(app.getSnapshot().phase).toBe("world-ready");
+    expect(hud.hidden).toBe(false);
+    expect(hud.style.pointerEvents).toBe("none");
+    expect(hud.textContent).toContain("Market Street");
+    expect(hud.querySelector('[data-testid="world-navigation-minimap"]')).not.toBeNull();
+
+    (host.querySelector('[data-testid="restart-from-spawn"]') as HTMLButtonElement).click();
+    await app.whenIdle();
+
+    expect(app.getSnapshot().phase).toBe("world-ready");
+    expect(loadCount).toBe(2);
+    expect(hud.textContent).toContain("Mission Street");
+    expect(marker.getAttribute("cx")).not.toBe(firstMarkerX);
+    expect(marker.getAttribute("cy")).not.toBe(firstMarkerY);
   });
 });

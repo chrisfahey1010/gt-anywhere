@@ -49,6 +49,7 @@ describe("world slice generator", () => {
           roads: [
             {
               id: "market-st",
+              displayName: "Market Street",
               kind: "primary",
               width: 18,
               points: [
@@ -58,6 +59,7 @@ describe("world slice generator", () => {
             },
             {
               id: "van-ness-ave",
+              displayName: "Van Ness Avenue",
               kind: "secondary",
               width: 14,
               points: [
@@ -130,6 +132,18 @@ describe("world slice generator", () => {
       }
     });
     expect(result.spawnCandidate).not.toHaveProperty("runtimeState");
+    expect(result.manifest.roads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "market-st",
+          displayName: "Market Street"
+        }),
+        expect.objectContaining({
+          id: "van-ness-ave",
+          displayName: "Van Ness Avenue"
+        })
+      ])
+    );
     expect(manifestStore.getBySliceId(result.manifest.sliceId)).toEqual(result.manifest);
     expect(manifestStore.getByReuseKey("san-francisco-ca")).toEqual(result.manifest);
     expect(generator.getStoredManifest?.(result.manifest.sliceId)).toEqual(result.manifest);
@@ -248,5 +262,37 @@ describe("world slice generator", () => {
     expect(result.manifest.roads.length).toBeGreaterThan(0);
     expect(result.manifest.chunks.length).toBeGreaterThan(0);
     expect(result.manifest.chunks.some((chunk) => chunk.id === result.spawnCandidate.chunkId)).toBe(true);
+  });
+
+  it("assigns deterministic friendly display names to fallback-generated roads", async () => {
+    const generator = new DefaultWorldSliceGenerator({
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const request = await createRequest(validSingleTokenLocationQuery);
+    const result = await generator.generate(request);
+
+    expect(result.ok).toBe(true);
+
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.manifest.roads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: expect.stringContaining(result.manifest.location.reuseKey),
+          displayName: "Arterial Road"
+        }),
+        expect.objectContaining({
+          id: expect.stringContaining(result.manifest.location.reuseKey),
+          displayName: "Cross Street"
+        }),
+        expect.objectContaining({
+          id: expect.stringContaining(result.manifest.location.reuseKey),
+          displayName: "Connector Lane"
+        })
+      ])
+    );
+    expect(result.manifest.roads.map((road) => road.displayName)).not.toContain(result.manifest.location.reuseKey);
   });
 });

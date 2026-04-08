@@ -1,5 +1,7 @@
 import { Vector3, type Scene } from "@babylonjs/core";
+import type { SliceBounds, SliceRoad, SliceSceneMetadata } from "../../world/chunks/slice-manifest";
 import type { PlayerInputFrame } from "../../vehicles/controllers/player-vehicle-controller";
+import { resolveCurrentRoad } from "./world-navigation";
 
 export type WorldScenePossessionMode = "vehicle" | "on-foot";
 
@@ -24,6 +26,147 @@ export interface SyncWorldSceneTelemetryOptions {
   possessionMode: WorldScenePossessionMode;
   scene: Pick<Scene, "activeCamera" | "metadata">;
   spawnPoint: Vector3;
+}
+
+export interface WorldNavigationRoadSnapshot {
+  id: string;
+  displayName: string;
+  kind: SliceRoad["kind"];
+  width: number;
+  points: Array<{
+    x: number;
+    z: number;
+  }>;
+}
+
+export interface WorldNavigationSnapshot {
+  actor: {
+    position: {
+      x: number;
+      y: number;
+      z: number;
+    };
+    facingYaw: number;
+    possessionMode: WorldScenePossessionMode;
+  };
+  streetLabel: string | null;
+  districtName: string;
+  locationName: string;
+  bounds: SliceBounds;
+  roads: WorldNavigationRoadSnapshot[];
+}
+
+export interface CreateWorldNavigationSnapshotOptions {
+  activeVehicle: {
+    vehicleType: string;
+    mesh: {
+      getDirection?(axis: Vector3): Vector3;
+      name: string;
+      position: {
+        x: number;
+        y: number;
+        z: number;
+      };
+      rotation: {
+        y: number;
+      };
+    };
+  };
+  manifest: {
+    bounds: SliceBounds;
+    roads: SliceRoad[];
+    sceneMetadata: Pick<SliceSceneMetadata, "displayName" | "districtName">;
+  };
+  roadSnapshots?: WorldNavigationRoadSnapshot[];
+  onFootActor?: {
+    mesh: {
+      name: string;
+      position: {
+        x: number;
+        y: number;
+        z: number;
+      };
+    };
+  } | null;
+  onFootFacingYaw?: number;
+  possessionMode: WorldScenePossessionMode;
+  previousActorId?: string;
+  previousRoadId?: string;
+}
+
+const WORLD_FORWARD_AXIS = new Vector3(0, 0, 1);
+
+function getVehicleFacingYaw(options: CreateWorldNavigationSnapshotOptions["activeVehicle"]): number {
+  const liveForward = options.mesh.getDirection?.(WORLD_FORWARD_AXIS);
+
+  if (liveForward) {
+    const horizontalMagnitude = Math.hypot(liveForward.x, liveForward.z);
+
+    if (horizontalMagnitude > 0.0001) {
+      return Math.atan2(liveForward.x, liveForward.z);
+    }
+  }
+
+  return options.mesh.rotation.y;
+}
+
+export function createWorldNavigationRoadSnapshots(roads: SliceRoad[]): WorldNavigationRoadSnapshot[] {
+  return roads.map((road) => ({
+    id: road.id,
+    displayName: road.displayName ?? road.id,
+    kind: road.kind,
+    width: road.width,
+    points: road.points.map((point) => ({
+      x: point.x,
+      z: point.z
+    }))
+  }));
+}
+
+export function createWorldNavigationSnapshot(
+  options: CreateWorldNavigationSnapshotOptions
+): { snapshot: WorldNavigationSnapshot; currentActorId: string; currentRoadId: string | null } {
+  const activeActor =
+    options.possessionMode === "on-foot" && options.onFootActor
+      ? {
+          actorId: options.onFootActor.mesh.name,
+          facingYaw: options.onFootFacingYaw ?? 0,
+          position: options.onFootActor.mesh.position
+        }
+      : {
+          actorId: options.activeVehicle.mesh.name,
+          facingYaw: getVehicleFacingYaw(options.activeVehicle),
+          position: options.activeVehicle.mesh.position
+        };
+  const currentRoad = resolveCurrentRoad({
+    roads: options.manifest.roads,
+    position: {
+      x: activeActor.position.x,
+      z: activeActor.position.z
+    },
+    previousRoadId: options.previousActorId === activeActor.actorId ? options.previousRoadId : undefined
+  });
+
+  return {
+    currentActorId: activeActor.actorId,
+    currentRoadId: currentRoad?.id ?? null,
+    snapshot: {
+      actor: {
+        position: {
+          x: activeActor.position.x,
+          y: activeActor.position.y,
+          z: activeActor.position.z
+        },
+        facingYaw: activeActor.facingYaw,
+        possessionMode: options.possessionMode
+      },
+      streetLabel: currentRoad?.displayName ?? null,
+      districtName: options.manifest.sceneMetadata.districtName,
+      locationName: options.manifest.sceneMetadata.displayName,
+      bounds: options.manifest.bounds,
+      roads: options.roadSnapshots ?? createWorldNavigationRoadSnapshots(options.manifest.roads)
+    }
+  };
 }
 
 export function canSwitchControlledVehicle(state: WorldSceneRuntimeState): boolean {
