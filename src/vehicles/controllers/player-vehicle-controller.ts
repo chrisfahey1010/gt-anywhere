@@ -3,6 +3,9 @@ export interface VehicleControlState {
   brake: number;
   steering: number;
   handbrake: boolean;
+  lookX: number;
+  lookY: number;
+  lookInputSource: "none" | "mouse" | "gamepad";
 }
 
 export interface VehicleGamepadState {
@@ -34,7 +37,10 @@ function createEmptyState(): VehicleControlState {
     throttle: 0,
     brake: 0,
     steering: 0,
-    handbrake: false
+    handbrake: false,
+    lookX: 0,
+    lookY: 0,
+    lookInputSource: "none"
   };
 }
 
@@ -61,6 +67,9 @@ export function createPlayerVehicleController(
   const gamepadProvider = options.gamepadProvider ?? (() => Array.from(navigator.getGamepads?.() ?? []));
   const activeKeys = new Set<string>();
 
+  let mouseLookX = 0;
+  let mouseLookY = 0;
+
   const handleKeyDown = (event: Event): void => {
     if (event instanceof KeyboardEvent) {
       activeKeys.add(event.code);
@@ -73,8 +82,16 @@ export function createPlayerVehicleController(
     }
   };
 
+  const handleMouseMove = (event: Event): void => {
+    if (event instanceof MouseEvent) {
+      mouseLookX += event.movementX ?? 0;
+      mouseLookY += event.movementY ?? 0;
+    }
+  };
+
   eventTarget.addEventListener("keydown", handleKeyDown);
   eventTarget.addEventListener("keyup", handleKeyUp);
+  eventTarget.addEventListener("mousemove", handleMouseMove);
 
   return {
     getState: () => {
@@ -100,6 +117,16 @@ export function createPlayerVehicleController(
         keyboardState.handbrake = true;
       }
 
+      keyboardState.lookX = mouseLookX;
+      keyboardState.lookY = mouseLookY;
+      if (mouseLookX !== 0 || mouseLookY !== 0) {
+        keyboardState.lookInputSource = "mouse";
+      }
+
+      // Reset mouse look delta after reading
+      mouseLookX = 0;
+      mouseLookY = 0;
+
       const gamepad = gamepadProvider().find((candidate) => candidate?.connected) ?? null;
 
       if (gamepad === null) {
@@ -110,20 +137,36 @@ export function createPlayerVehicleController(
         throttle: readButtonValue(gamepad.buttons, 7),
         brake: readButtonValue(gamepad.buttons, 6),
         steering: applyDeadzone(gamepad.axes[0] ?? 0, GAMEPAD_STEERING_DEADZONE),
-        handbrake: readButtonPressed(gamepad.buttons, 0)
+        handbrake: readButtonPressed(gamepad.buttons, 0),
+        lookX: applyDeadzone(gamepad.axes[2] ?? 0, GAMEPAD_STEERING_DEADZONE),
+        lookY: applyDeadzone(gamepad.axes[3] ?? 0, GAMEPAD_STEERING_DEADZONE),
+        lookInputSource: "none"
       };
+
+      if (gamepadState.lookX !== 0 || gamepadState.lookY !== 0) {
+        gamepadState.lookInputSource = "gamepad";
+      }
+
+      const useMouseLook = keyboardState.lookInputSource === "mouse";
+      const useGamepadLook = gamepadState.lookInputSource === "gamepad";
 
       return {
         throttle: Math.max(keyboardState.throttle, gamepadState.throttle),
         brake: Math.max(keyboardState.brake, gamepadState.brake),
         steering: chooseDominantSteering(keyboardState.steering, gamepadState.steering),
-        handbrake: keyboardState.handbrake || gamepadState.handbrake
+        handbrake: keyboardState.handbrake || gamepadState.handbrake,
+        lookX: useMouseLook ? keyboardState.lookX : gamepadState.lookX,
+        lookY: useMouseLook ? keyboardState.lookY : gamepadState.lookY,
+        lookInputSource: useMouseLook ? "mouse" : useGamepadLook ? "gamepad" : "none"
       };
     },
     dispose: () => {
       activeKeys.clear();
+      mouseLookX = 0;
+      mouseLookY = 0;
       eventTarget.removeEventListener("keydown", handleKeyDown);
       eventTarget.removeEventListener("keyup", handleKeyUp);
+      eventTarget.removeEventListener("mousemove", handleMouseMove);
     }
   };
 }

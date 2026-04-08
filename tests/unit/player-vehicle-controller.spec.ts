@@ -39,7 +39,10 @@ describe("player vehicle controller", () => {
       throttle: 1,
       brake: 0,
       steering: -1,
-      handbrake: true
+      handbrake: true,
+      lookX: 0,
+      lookY: 0,
+      lookInputSource: "none"
     });
 
     window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyW" }));
@@ -60,10 +63,50 @@ describe("player vehicle controller", () => {
       throttle: 1,
       brake: 0.35,
       steering: -0.6,
-      handbrake: true
+      handbrake: true,
+      lookX: 0,
+      lookY: 0,
+      lookInputSource: "none"
     });
 
     window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyW" }));
+    controller.dispose();
+  });
+
+  it("captures mouse movement for free-look and zeroes it out after reading", () => {
+    const controller = createPlayerVehicleController({ eventTarget: window });
+
+    // Simulate mouse move
+    const event = new MouseEvent("mousemove");
+    Object.defineProperty(event, "movementX", { value: 15 });
+    Object.defineProperty(event, "movementY", { value: -10 });
+    window.dispatchEvent(event);
+
+    const state1 = controller.getState();
+    expect(state1.lookX).toBe(15);
+    expect(state1.lookY).toBe(-10);
+    expect(state1.lookInputSource).toBe("mouse");
+
+    // Should be zero after first read (delta is per frame)
+    const state2 = controller.getState();
+    expect(state2.lookX).toBe(0);
+    expect(state2.lookY).toBe(0);
+    expect(state2.lookInputSource).toBe("none");
+
+    controller.dispose();
+  });
+
+  it("captures gamepad right stick for free-look", () => {
+    const controller = createPlayerVehicleController({
+      eventTarget: window,
+      gamepadProvider: () => [createGamepadState({ axes: [0, 0, 0.8, -0.6] })]
+    });
+
+    const state = controller.getState();
+    expect(state.lookX).toBeGreaterThan(0);
+    expect(state.lookY).toBeLessThan(0);
+    expect(state.lookInputSource).toBe("gamepad");
+
     controller.dispose();
   });
 });

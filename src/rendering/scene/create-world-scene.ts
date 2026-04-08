@@ -351,7 +351,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     };
 
     try {
-      camera = createStarterVehicleCamera({ scene, target: starterVehicle.mesh });
+      camera = createStarterVehicleCamera({ scene, target: starterVehicle.mesh, controller });
       scene.registerBeforeRender(updateStarterVehicle);
     } catch (error) {
       controller.dispose();
