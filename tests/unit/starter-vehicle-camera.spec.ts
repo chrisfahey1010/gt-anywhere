@@ -6,6 +6,24 @@ import { PlayerVehicleController } from "../../src/vehicles/controllers/player-v
 function createMockController(overrides: Partial<ReturnType<PlayerVehicleController["getState"]>> = {}): PlayerVehicleController {
   return {
     bindVehicle: () => {},
+    captureInputFrame: () => ({
+      interactionRequested: false,
+      onFootMovement: {
+        forward: 0,
+        right: 0
+      },
+      switchVehicleRequested: false,
+      vehicleControls: {
+        throttle: 0,
+        brake: 0,
+        steering: 0,
+        handbrake: false,
+        lookX: 0,
+        lookY: 0,
+        lookInputSource: "none",
+        ...overrides
+      }
+    }),
     consumeSwitchVehicleRequest: () => false,
     getState: () => ({
       throttle: 0,
@@ -59,7 +77,9 @@ describe("starter vehicle camera", () => {
     const camera = createStarterVehicleCamera({ scene, target, controller: createMockController() });
     const baseFov = camera.fov;
     
-    scene.render();
+    for (let frame = 0; frame < 10; frame += 1) {
+      scene.render();
+    }
 
     expect(camera.fov).toBeGreaterThan(baseFov);
   });
@@ -78,7 +98,9 @@ describe("starter vehicle camera", () => {
     const camera = createStarterVehicleCamera({ scene, target, controller: createMockController() });
     
     // Initial render to set base position
-    scene.render();
+    for (let frame = 0; frame < 10; frame += 1) {
+      scene.render();
+    }
     const initialPos = camera.position.clone();
     
     // Simulate sudden jump, turn, and body tilt.
@@ -140,6 +162,30 @@ describe("starter vehicle camera", () => {
 
     expect(Vector3.Distance(activeLookAt, baseLookAt)).toBeGreaterThan(0.5);
     expect(Vector3.Distance(activePos, basePos)).toBeGreaterThan(0.5);
+  });
+
+  it("can read free-look input from a shared world-frame provider", () => {
+    const target = MeshBuilder.CreateBox("starter-vehicle", { size: 1 }, scene);
+    const camera = createStarterVehicleCamera({
+      scene,
+      target,
+      controller: createMockController(),
+      getInputState: () => ({
+        throttle: 0,
+        brake: 0,
+        steering: 0,
+        handbrake: false,
+        lookX: 12,
+        lookY: 0,
+        lookInputSource: "mouse"
+      })
+    });
+
+    for (let frame = 0; frame < 10; frame += 1) {
+      scene.render();
+    }
+
+    expect(Vector3.Distance(camera.getTarget(), target.position.add(target.forward.scale(5)))).toBeGreaterThan(0.25);
   });
 
   it("returns to center when manual input stops", () => {

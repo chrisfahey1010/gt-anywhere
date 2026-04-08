@@ -15,10 +15,16 @@ import {
   Vector3
 } from "@babylonjs/core";
 import type { SpawnCandidate, SliceManifest, SliceRoad } from "../../world/chunks/slice-manifest";
+import { createOnFootCamera, type OnFootCamera } from "../../sandbox/on-foot/create-on-foot-camera";
+import {
+  createPlayerPossessionRuntime,
+  type PlayerPossessionRuntime
+} from "../../sandbox/on-foot/player-possession-runtime";
 import { createWorldSceneRuntimeError } from "../../world/generation/world-load-failure";
 import { createStarterVehicleCamera } from "../../vehicles/cameras/create-starter-vehicle-camera";
 import {
   createPlayerVehicleController,
+  type PlayerInputFrame,
   type PlayerVehicleController
 } from "../../vehicles/controllers/player-vehicle-controller";
 import {
@@ -27,6 +33,11 @@ import {
   type VehicleManager
 } from "../../vehicles/physics/vehicle-manager";
 import { createVehicleFactory, loadTuningProfile } from "../../vehicles/physics/vehicle-factory";
+import {
+  canSwitchControlledVehicle,
+  sanitizeWorldRuntimeInputFrame,
+  syncWorldSceneTelemetry
+} from "./world-scene-runtime";
 
 const AVAILABLE_VEHICLE_TYPES = ["sedan", "sports-car", "heavy-truck"] as const;
 const DEFAULT_VEHICLE_TYPE = AVAILABLE_VEHICLE_TYPES[0];
@@ -267,7 +278,9 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     ground.checkCollisions = true;
 
     const staticPhysicsMeshes: AbstractMesh[] = [ground];
-    staticPhysicsMeshes.push(...buildBoundaryWalls(scene, staticSurfaceRoot, manifest, boundaryMaterial));
+    const walkableSurfaceMeshes: AbstractMesh[] = [ground];
+    const exitBlockingMeshes = buildBoundaryWalls(scene, staticSurfaceRoot, manifest, boundaryMaterial);
+    staticPhysicsMeshes.push(...exitBlockingMeshes);
 
     const chunkRoots = manifest.chunks.map((chunk, chunkIndex) => {
       const chunkRoot = new TransformNode(`chunk-root-${chunk.id}`, scene);
@@ -289,14 +302,19 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       chunkFloor.parent = chunkRoot;
       chunkFloor.material = groundMaterial;
       staticPhysicsMeshes.push(chunkFloor);
+      walkableSurfaceMeshes.push(chunkFloor);
 
       manifest.roads
         .filter((road) => chunk.roadIds.includes(road.id))
         .forEach((road) => {
-          staticPhysicsMeshes.push(...buildRoadSegments(scene, chunkRoot, road, roadMaterial));
+          const roadSegments = buildRoadSegments(scene, chunkRoot, road, roadMaterial);
+          staticPhysicsMeshes.push(...roadSegments);
+          walkableSurfaceMeshes.push(...roadSegments);
         });
 
-      staticPhysicsMeshes.push(...buildChunkMassing(scene, chunkRoot, manifest, chunkIndex, spawnCandidate.chunkId));
+      const chunkMassing = buildChunkMassing(scene, chunkRoot, manifest, chunkIndex, spawnCandidate.chunkId);
+      staticPhysicsMeshes.push(...chunkMassing);
+      exitBlockingMeshes.push(...chunkMassing);
 
       return chunkRoot;
     });
@@ -361,13 +379,23 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       );
     }
 
+    let currentInputFrame: PlayerInputFrame = controller.captureInputFrame();
+    const possessionRuntime: PlayerPossessionRuntime = createPlayerPossessionRuntime({
+      blockingMeshes: exitBlockingMeshes,
+      parent: worldRoot,
+      scene,
+      sliceBounds: manifest.bounds,
+      surfaceMeshes: walkableSurfaceMeshes
+    });
+
     let camera: ReturnType<typeof createStarterVehicleCamera>;
+    let onFootCamera: OnFootCamera | null = null;
     let removeVehicleSwitchListener = (): void => {};
     let vehicleSwitchInFlight = false;
     const spawnPoint = new Vector3(spawnCandidate.position.x, spawnCandidate.position.y, spawnCandidate.position.z);
 
     const cycleActiveVehicle = async (): Promise<void> => {
-      if (vehicleSwitchInFlight) {
+      if (!canSwitchControlledVehicle({ possessionMode: possessionRuntime.getMode(), vehicleSwitchInFlight })) {
         return;
       }
 
@@ -382,7 +410,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     };
 
     const switchActiveVehicle = async (vehicleType: string): Promise<void> => {
-      if (vehicleSwitchInFlight) {
+      if (!canSwitchControlledVehicle({ possessionMode: possessionRuntime.getMode(), vehicleSwitchInFlight })) {
         return;
       }
 
@@ -396,43 +424,82 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       }
     };
 
-    const updateStarterVehicle = (): void => {
-      if (!vehicleSwitchInFlight && controller.consumeSwitchVehicleRequest()) {
+    const updateWorldRuntime = (): void => {
+      const deltaTimeMs = scene.getEngine().getDeltaTime() || 16;
+      const possessionModeBeforeUpdate = possessionRuntime.getMode();
+      const worldInputFrame = sanitizeWorldRuntimeInputFrame(currentInputFrame, {
+        possessionMode: possessionModeBeforeUpdate,
+        vehicleSwitchInFlight
+      });
+      const possessionUpdate = possessionRuntime.update(worldInputFrame, deltaTimeMs / 1000);
+      const possessionMode = possessionRuntime.getMode();
+
+      if (possessionUpdate.transition === "exited") {
+        controller.unbindVehicle();
+        const onFootRuntime = possessionRuntime.getOnFootRuntime();
+
+        if (onFootRuntime !== null) {
+          if (onFootCamera === null) {
+            onFootCamera = createOnFootCamera({ scene, target: onFootRuntime.mesh });
+          } else {
+            onFootCamera.setTargetActor(onFootRuntime.mesh);
+            scene.activeCamera = onFootCamera;
+          }
+        }
+      }
+
+      if (possessionUpdate.transition === "reentered") {
+        controller.bindVehicle(vehicleManager.getActiveVehicle().mesh);
+        camera.setVehicleTarget(vehicleManager.getActiveVehicle().mesh);
+        scene.activeCamera = camera;
+      }
+
+      if (
+        canSwitchControlledVehicle({ possessionMode, vehicleSwitchInFlight }) &&
+        worldInputFrame.switchVehicleRequested
+      ) {
         void cycleActiveVehicle();
       }
 
-      vehicleManager.getActiveVehicle().update();
+      if (possessionMode === "vehicle") {
+        vehicleManager.getActiveVehicle().update(worldInputFrame.vehicleControls);
+      } else {
+        onFootCamera?.updateView(possessionRuntime.getFacingYaw(), possessionRuntime.getLookPitch());
+      }
     };
 
     const syncCanvasTelemetry = (): void => {
-      const activeVehicle = vehicleManager.getActiveVehicle();
-      const deltaX = activeVehicle.mesh.position.x - spawnPoint.x;
-      const deltaZ = activeVehicle.mesh.position.z - spawnPoint.z;
-      const horizontalDistance = Math.sqrt(deltaX * deltaX + deltaZ * deltaZ);
-
-      if (scene.metadata) {
-        scene.metadata.starterVehicleId = activeVehicle.mesh.name;
-        scene.metadata.activeVehicleType = activeVehicle.vehicleType;
-      }
-
-      canvas.dataset.starterVehicleDistance = horizontalDistance.toFixed(3);
-      canvas.dataset.starterVehicleId = activeVehicle.mesh.name;
-      canvas.dataset.starterVehicleX = activeVehicle.mesh.position.x.toFixed(3);
-      canvas.dataset.starterVehicleZ = activeVehicle.mesh.position.z.toFixed(3);
-      canvas.dataset.activeVehicleType = activeVehicle.vehicleType;
+      syncWorldSceneTelemetry({
+        activeVehicle: vehicleManager.getActiveVehicle(),
+        canvas,
+        fallbackCameraName: camera.name,
+        onFootActorId: possessionRuntime.getOnFootRuntime()?.mesh.name,
+        possessionMode: possessionRuntime.getMode(),
+        scene,
+        spawnPoint
+      });
     };
 
     try {
-      camera = createStarterVehicleCamera({ scene, target: vehicleManager.getActiveVehicle().mesh, controller });
+      camera = createStarterVehicleCamera({
+        scene,
+        target: vehicleManager.getActiveVehicle().mesh,
+        controller,
+        getInputState: () => currentInputFrame.vehicleControls
+      });
+      possessionRuntime.bindActiveVehicle(vehicleManager.getActiveVehicle());
       removeVehicleSwitchListener = vehicleManager.onVehicleSwitched((event) => {
+        possessionRuntime.bindActiveVehicle(event.activeVehicle);
         controller.unbindVehicle();
         controller.bindVehicle(event.activeVehicle.mesh);
         camera.setVehicleTarget(event.activeVehicle.mesh);
+        scene.activeCamera = camera;
         syncCanvasTelemetry();
       });
-      scene.registerBeforeRender(updateStarterVehicle);
+      scene.registerBeforeRender(updateWorldRuntime);
     } catch (error) {
       controller.dispose();
+      possessionRuntime.dispose();
       vehicleManager.dispose();
       throw createWorldSceneRuntimeError(
         "STARTER_VEHICLE_POSSESSION_FAILED",
@@ -445,22 +512,22 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       );
     }
 
-    scene.metadata = {
-      sliceId: manifest.sliceId,
-      worldRootName: worldRoot.name,
+      scene.metadata = {
+        sliceId: manifest.sliceId,
+        worldRootName: worldRoot.name,
       staticSurfaceRootName: staticSurfaceRoot.name,
       chunkRootNames: chunkRoots.map((chunkRoot) => chunkRoot.name),
       physicsReady: scene.isPhysicsEnabled(),
       starterVehicleId: vehicleManager.getActiveVehicle().mesh.name,
       availableVehicleTypes: [...AVAILABLE_VEHICLE_TYPES],
-      activeVehicleType: vehicleManager.getActiveVehicle().vehicleType,
-      spawnRoadId: spawnCandidate.roadId,
-      spawnChunkId: spawnCandidate.chunkId,
-      readinessMilestone: "controllable-vehicle",
-      activeCamera: camera.getClassName()
-    };
+        activeVehicleType: vehicleManager.getActiveVehicle().vehicleType,
+        spawnRoadId: spawnCandidate.roadId,
+        spawnChunkId: spawnCandidate.chunkId,
+        readinessMilestone: "controllable-vehicle",
+        activeCamera: camera.name
+      };
     canvas.dataset.readyMilestone = "controllable-vehicle";
-    canvas.dataset.activeCamera = camera.getClassName();
+    canvas.dataset.activeCamera = camera.name;
     canvas.dataset.spawnRoadId = spawnCandidate.roadId;
     canvas.dataset.spawnChunkId = spawnCandidate.chunkId;
     canvas.dataset.starterVehicleId = vehicleManager.getActiveVehicle().mesh.name;
@@ -472,6 +539,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
 
     window.addEventListener("resize", resize);
     engine.runRenderLoop(() => {
+      currentInputFrame = controller.captureInputFrame();
       scene.render();
       syncCanvasTelemetry();
     });
@@ -481,9 +549,10 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       cycleVehicle: cycleActiveVehicle,
       dispose: () => {
         window.removeEventListener("resize", resize);
-        scene.unregisterBeforeRender(updateStarterVehicle);
+        scene.unregisterBeforeRender(updateWorldRuntime);
         removeVehicleSwitchListener();
         controller.dispose();
+        possessionRuntime.dispose();
         vehicleManager.dispose();
         physicsAggregates.forEach((aggregate) => aggregate.dispose());
         scene.dispose();

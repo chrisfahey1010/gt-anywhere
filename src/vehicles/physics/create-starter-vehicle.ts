@@ -10,12 +10,12 @@ import {
   Vector3
 } from "@babylonjs/core";
 import type { SpawnCandidate } from "../../world/chunks/slice-manifest";
-import type { PlayerVehicleController } from "../controllers/player-vehicle-controller";
+import type { PlayerVehicleController, VehicleControlState } from "../controllers/player-vehicle-controller";
 
 export interface StarterVehicleRuntime {
   mesh: Mesh;
   physicsAggregate: PhysicsAggregate;
-  update(): void;
+  update(inputState?: VehicleControlState): void;
   dispose(): void;
 }
 
@@ -79,8 +79,8 @@ export function createStarterVehicle(options: CreateStarterVehicleOptions): Star
   return {
     mesh: vehicleMesh,
     physicsAggregate,
-    update: () => {
-      const controls = controller.getState();
+    update: (inputState?: VehicleControlState) => {
+      const controls = inputState ?? controller.getState();
       const currentVelocity = physicsAggregate.body.getLinearVelocity();
       const forward = vehicleMesh.getDirection(FORWARD_AXIS).normalizeToRef(driveDirection);
       forward.y = 0;

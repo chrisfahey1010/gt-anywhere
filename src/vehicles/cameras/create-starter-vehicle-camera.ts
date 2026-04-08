@@ -1,5 +1,5 @@
 import { TargetCamera, Vector3, Scalar, Matrix, type AbstractMesh, type Scene } from "@babylonjs/core";
-import type { PlayerVehicleController } from "../controllers/player-vehicle-controller";
+import type { PlayerVehicleController, VehicleControlState } from "../controllers/player-vehicle-controller";
 
 const FORWARD_AXIS = new Vector3(0, 0, 1);
 const UP_AXIS = new Vector3(0, 1, 0);
@@ -8,6 +8,7 @@ export interface CreateStarterVehicleCameraOptions {
   scene: Scene;
   target: AbstractMesh;
   controller: PlayerVehicleController;
+  getInputState?(): VehicleControlState;
 }
 
 export interface StarterVehicleCamera extends TargetCamera {
@@ -16,6 +17,7 @@ export interface StarterVehicleCamera extends TargetCamera {
 
 export function createStarterVehicleCamera(options: CreateStarterVehicleCameraOptions): StarterVehicleCamera {
   const { scene, target, controller } = options;
+  const getInputState = options.getInputState ?? (() => controller.getState());
   let activeTarget = target;
 
   const baseFov = 0.9;
@@ -119,7 +121,7 @@ export function createStarterVehicleCamera(options: CreateStarterVehicleCameraOp
     camera.fov = Scalar.Lerp(camera.fov, targetFov, horizontalLerpFactor * 0.5);
 
     // 3. Free-look logic
-    const state = controller.getState();
+    const state = getInputState();
     const hasManualLook = Math.abs(state.lookX) > 0.01 || Math.abs(state.lookY) > 0.01;
 
     if (hasManualLook) {
@@ -127,7 +129,7 @@ export function createStarterVehicleCamera(options: CreateStarterVehicleCameraOp
         freeLookYaw -= state.lookX * gamepadLookYawSpeed * deltaTime;
         freeLookPitch -= state.lookY * gamepadLookPitchSpeed * deltaTime;
       } else {
-        freeLookYaw -= state.lookX * mouseLookSensitivity; // Inverted to match standard mouse orbit
+        freeLookYaw -= state.lookX * mouseLookSensitivity;
         freeLookPitch -= state.lookY * mouseLookSensitivity; // Negative Y moves pitch down
       }
       freeLookPitch = Scalar.Clamp(freeLookPitch, minFreeLookPitch, maxFreeLookPitch);

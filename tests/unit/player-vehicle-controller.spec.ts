@@ -28,6 +28,96 @@ function createGamepadState(overrides: Partial<VehicleGamepadState> = {}): Vehic
 }
 
 describe("player vehicle controller", () => {
+  it("captures a shared input frame with one-shot interaction and switch requests", () => {
+    const controller = createPlayerVehicleController({ eventTarget: window });
+
+    controller.bindVehicle({});
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyW" }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD" }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE" }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Tab" }));
+
+    const mouseEvent = new MouseEvent("mousemove");
+    Object.defineProperty(mouseEvent, "movementX", { value: 18 });
+    Object.defineProperty(mouseEvent, "movementY", { value: -6 });
+    window.dispatchEvent(mouseEvent);
+
+    const frame = controller.captureInputFrame();
+
+    expect(frame).toEqual({
+      interactionRequested: true,
+      onFootMovement: {
+        forward: 1,
+        right: 1
+      },
+      switchVehicleRequested: true,
+      vehicleControls: {
+        throttle: 1,
+        brake: 0,
+        steering: 1,
+        handbrake: false,
+        lookX: -18,
+        lookY: -6,
+        lookInputSource: "mouse"
+      }
+    });
+
+    expect(controller.captureInputFrame()).toEqual({
+      interactionRequested: false,
+      onFootMovement: {
+        forward: 1,
+        right: 1
+      },
+      switchVehicleRequested: false,
+      vehicleControls: {
+        throttle: 1,
+        brake: 0,
+        steering: 1,
+        handbrake: false,
+        lookX: 0,
+        lookY: 0,
+        lookInputSource: "none"
+      }
+    });
+
+    window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyW" }));
+    window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyD" }));
+    window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyE" }));
+    controller.dispose();
+  });
+
+  it("keeps vehicle controls gated while still exposing on-foot movement and interaction input", () => {
+    const controller = createPlayerVehicleController({ eventTarget: window });
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyW" }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyA" }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE" }));
+
+    expect(controller.captureInputFrame()).toEqual({
+      interactionRequested: true,
+      onFootMovement: {
+        forward: 1,
+        right: -1
+      },
+      switchVehicleRequested: false,
+      vehicleControls: {
+        throttle: 0,
+        brake: 0,
+        steering: 0,
+        handbrake: false,
+        lookX: 0,
+        lookY: 0,
+        lookInputSource: "none"
+      }
+    });
+
+    window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyW" }));
+    window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyA" }));
+    window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyE" }));
+    controller.dispose();
+  });
+
   it("only exposes driving input while a vehicle is bound", () => {
     const controller = createPlayerVehicleController({ eventTarget: window });
 
@@ -122,7 +212,7 @@ describe("player vehicle controller", () => {
     window.dispatchEvent(event);
 
     const state1 = controller.getState();
-    expect(state1.lookX).toBe(15);
+    expect(state1.lookX).toBe(-15);
     expect(state1.lookY).toBe(-10);
     expect(state1.lookInputSource).toBe("mouse");
 
@@ -144,7 +234,7 @@ describe("player vehicle controller", () => {
     controller.bindVehicle({});
 
     const state = controller.getState();
-    expect(state.lookX).toBeGreaterThan(0);
+    expect(state.lookX).toBeLessThan(0);
     expect(state.lookY).toBeLessThan(0);
     expect(state.lookInputSource).toBe("gamepad");
 

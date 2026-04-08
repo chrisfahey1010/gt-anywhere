@@ -139,4 +139,85 @@ describe("app bootstrap smoke", () => {
     expect(readyMilestone).toBe("controllable-vehicle");
     expect(readyCount).toBe(2);
   });
+
+  it("keeps the controllable-vehicle baseline and possession indicator coherent across restart", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const eventBus = new GameEventBus();
+    let readyMilestone: string | null = null;
+    let readyCount = 0;
+    let activeSceneCanvas: HTMLCanvasElement | null = null;
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => ({
+        ok: true,
+        manifest,
+        spawnCandidate: manifest.spawnCandidates[0]
+      })
+    };
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost }) => {
+        const canvas = document.createElement("canvas");
+        canvas.dataset.readyMilestone = "controllable-vehicle";
+        canvas.dataset.possessionMode = "vehicle";
+        canvas.dataset.activeCamera = "starter-vehicle-camera";
+        canvas.dataset.testid = "world-scene-canvas";
+        renderHost.replaceChildren(canvas);
+        activeSceneCanvas = canvas;
+
+        return {
+          canvas,
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+
+    eventBus.on("world.scene.ready", (event) => {
+      readyMilestone = event.readinessMilestone;
+      readyCount += 1;
+    });
+
+    const app = await createGameApp({ host, eventBus, sliceGenerator, sceneLoader });
+    const input = host.querySelector("input") as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await app.whenIdle();
+
+    if (activeSceneCanvas === null) {
+      throw new Error("Expected scene canvas to be created");
+    }
+
+    const sceneCanvas: HTMLCanvasElement = activeSceneCanvas;
+
+    expect(sceneCanvas.dataset.readyMilestone).toBe("controllable-vehicle");
+    expect(sceneCanvas.dataset.possessionMode).toBe("vehicle");
+
+    sceneCanvas.dataset.possessionMode = "on-foot";
+    expect(sceneCanvas.dataset.possessionMode).toBe("on-foot");
+
+    sceneCanvas.dataset.possessionMode = "vehicle";
+    sceneCanvas.dataset.activeCamera = "on-foot-camera";
+    sceneCanvas.dataset.activeCamera = "starter-vehicle-camera";
+    expect(sceneCanvas.dataset.possessionMode).toBe("vehicle");
+
+    (host.querySelector('[data-testid="restart-from-spawn"]') as HTMLButtonElement).click();
+    await app.whenIdle();
+
+    if (activeSceneCanvas === null) {
+      throw new Error("Expected restarted scene canvas to be created");
+    }
+
+    const restartedSceneCanvas: HTMLCanvasElement = activeSceneCanvas;
+
+    expect(app.getSnapshot().phase).toBe("world-ready");
+    expect(restartedSceneCanvas.dataset.readyMilestone).toBe("controllable-vehicle");
+    expect(restartedSceneCanvas.dataset.possessionMode).toBe("vehicle");
+    expect(restartedSceneCanvas.dataset.activeCamera).toBe("starter-vehicle-camera");
+    expect(readyMilestone).toBe("controllable-vehicle");
+    expect(readyCount).toBe(2);
+  });
 });
