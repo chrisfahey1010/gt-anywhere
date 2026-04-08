@@ -160,6 +160,104 @@ describe("location entry integration", () => {
     expect(inputAfterEdit.value).toBe("San Francisco, CA");
   });
 
+  it("offers restart from spawn in world-ready and does not resolve the location again", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    let resolveCalls = 0;
+    let generateCalls = 0;
+    const baseResolver = new LocationResolver();
+    const resolver: Pick<LocationResolver, "resolve"> = {
+      resolve: async (query) => {
+        resolveCalls += 1;
+        return baseResolver.resolve(query);
+      }
+    };
+    const restartManifest: SliceManifest = {
+      ...manifest,
+      sliceId: "san-francisco-ca-story-1-5-regenerated",
+      spawnCandidates: [
+        {
+          ...manifest.spawnCandidates[0],
+          id: "spawn-regenerated",
+          roadId: "market-st-regenerated"
+        }
+      ]
+    };
+    const sceneLoadRecords: Array<{ manifest: SliceManifest; spawnCandidate: SpawnCandidate }> = [];
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => {
+        generateCalls += 1;
+
+        if (generateCalls === 1) {
+          return {
+            ok: true,
+            manifest,
+            spawnCandidate: manifest.spawnCandidates[0]
+          };
+        }
+
+        return {
+          ok: true,
+          manifest: restartManifest,
+          spawnCandidate: restartManifest.spawnCandidates[0]
+        };
+      }
+    };
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost, manifest, spawnCandidate }) => {
+        sceneLoadRecords.push({ manifest, spawnCandidate });
+        renderHost.innerHTML = '<div data-testid="world-ready-scene">Fake world scene</div>';
+
+        return {
+          canvas: document.createElement("canvas"),
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+    const app = await createGameApp({
+      host,
+      resolver: resolver as LocationResolver,
+      sliceGenerator,
+      sceneLoader,
+      clock: () => "2026-04-07T00:00:00.000Z"
+    });
+
+    const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationAliasQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    await app.whenIdle();
+
+    const restartAction = host.querySelector('[data-testid="restart-from-spawn"]') as HTMLButtonElement;
+
+    expect(app.getSnapshot().phase).toBe("world-ready");
+    expect(restartAction.textContent).toContain("Restart from spawn");
+
+    restartAction.click();
+    await app.whenIdle();
+
+    expect(app.getSnapshot().phase).toBe("world-ready");
+    expect(app.getSnapshot().sessionIdentity?.placeName).toBe("San Francisco, CA");
+    expect(resolveCalls).toBe(1);
+    expect(generateCalls).toBe(1);
+    expect(app.getSnapshot().sliceManifest?.sliceId).toBe(manifest.sliceId);
+    expect(app.getSnapshot().spawnCandidate?.id).toBe("spawn-0");
+    expect(sceneLoadRecords).toHaveLength(2);
+    expect(sceneLoadRecords[0]).toMatchObject({
+      manifest,
+      spawnCandidate: manifest.spawnCandidates[0]
+    });
+    expect(sceneLoadRecords[1]).toMatchObject({
+      manifest,
+      spawnCandidate: manifest.spawnCandidates[0]
+    });
+  });
+
   it("stores a serializable handoff contract and emits typed events with structured logs", async () => {
     document.body.innerHTML = '<div id="app"></div>';
 
@@ -343,10 +441,11 @@ describe("location entry integration", () => {
     const host = document.querySelector("#app") as HTMLElement;
     const emittedEvents: string[] = [];
     const eventBus = new GameEventBus();
-    let attempts = 0;
+    let generateCalls = 0;
+    let sceneLoadAttempts = 0;
     const sliceGenerator: WorldSliceGenerator = {
       generate: async () => {
-        attempts += 1;
+        generateCalls += 1;
 
         return {
           ok: true,
@@ -357,9 +456,10 @@ describe("location entry integration", () => {
     };
     const sceneLoader: WorldSceneLoader = {
       load: async ({ renderHost }) => {
+        sceneLoadAttempts += 1;
         renderHost.innerHTML = "";
 
-        if (attempts === 1) {
+        if (sceneLoadAttempts === 1) {
           throw new Error("scene bootstrap failed");
         }
 
@@ -397,7 +497,112 @@ describe("location entry integration", () => {
 
     expect(app.getSnapshot().phase).toBe("world-ready");
     expect(app.getSnapshot().sliceManifest?.sliceId).toBe(manifest.sliceId);
+    expect(generateCalls).toBe(1);
     expect(emittedEvents).toEqual(["world.load.failed", "world.scene.ready"]);
+  });
+
+  it("disposes the previous world scene and keeps a single ready scene after restart", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const eventBus = new GameEventBus();
+    const readyEvents: string[] = [];
+    const { sliceGenerator } = createSuccessfulWorldDependencies();
+    const disposeCalls: number[] = [];
+    let loadCount = 0;
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost }) => {
+        loadCount += 1;
+        const loadId = loadCount;
+        disposeCalls.push(0);
+        renderHost.innerHTML = `<div data-testid="world-ready-scene" data-load-id="${loadId}">Fake world scene ${loadId}</div>`;
+
+        return {
+          canvas: document.createElement("canvas"),
+          dispose: () => {
+            disposeCalls[loadId - 1] = (disposeCalls[loadId - 1] ?? 0) + 1;
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+
+    eventBus.on("world.scene.ready", (event) => readyEvents.push(event.type));
+
+    const app = await createGameApp({ host, eventBus, sliceGenerator, sceneLoader });
+    const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationAliasQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    await app.whenIdle();
+
+    (host.querySelector('[data-testid="restart-from-spawn"]') as HTMLButtonElement).click();
+    await app.whenIdle();
+
+    expect(app.getSnapshot().phase).toBe("world-ready");
+    expect(readyEvents).toEqual(["world.scene.ready", "world.scene.ready"]);
+    expect(disposeCalls).toEqual([1, 0]);
+    expect(host.querySelectorAll('[data-testid="world-ready-scene"]')).toHaveLength(1);
+    expect(host.querySelector('[data-load-id="2"]')).not.toBeNull();
+  });
+
+  it("preserves the same cached slice context when restart fails again", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    let generateCalls = 0;
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => {
+        generateCalls += 1;
+
+        return {
+          ok: true,
+          manifest,
+          spawnCandidate: manifest.spawnCandidates[0]
+        };
+      }
+    };
+    let sceneLoadAttempts = 0;
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost }) => {
+        sceneLoadAttempts += 1;
+
+        if (sceneLoadAttempts === 2) {
+          throw new Error("scene bootstrap failed again");
+        }
+
+        renderHost.innerHTML = '<div data-testid="world-ready-scene">Fake world scene</div>';
+
+        return {
+          canvas: document.createElement("canvas"),
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+
+    const app = await createGameApp({ host, sliceGenerator, sceneLoader });
+    const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationAliasQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    await app.whenIdle();
+
+    (host.querySelector('[data-testid="restart-from-spawn"]') as HTMLButtonElement).click();
+    await app.whenIdle();
+
+    expect(app.getSnapshot().phase).toBe("world-load-error");
+    expect(app.getSnapshot().sessionIdentity?.placeName).toBe("San Francisco, CA");
+    expect(app.getSnapshot().sliceManifest?.sliceId).toBe(manifest.sliceId);
+    expect(app.getSnapshot().spawnCandidate?.id).toBe("spawn-0");
+    expect(generateCalls).toBe(1);
+    expect(host.textContent).toContain("Retry load");
+    expect(host.textContent).toContain("Edit location");
   });
 
   it("keeps the player in the location flow and shows a recoverable error for an unresolvable query", async () => {
@@ -562,6 +767,70 @@ describe("location entry integration", () => {
 
     expect(app.getSnapshot().phase).toBe("location-select");
     expect(emittedEvents).toEqual([]);
+    expect(host.querySelector('[data-testid="world-ready-scene"]')).toBeNull();
+  });
+
+  it("ignores a late restart scene-load completion after the player edits during delayed restart", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const { sliceGenerator } = createSuccessfulWorldDependencies();
+    let resolveRestartSceneLoad:
+      | ((value: { canvas: HTMLCanvasElement; dispose(): void }) => void)
+      | undefined;
+    const emittedEvents: string[] = [];
+    const eventBus = new GameEventBus();
+    let loadCount = 0;
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost }) => {
+        loadCount += 1;
+
+        if (loadCount === 1) {
+          renderHost.innerHTML = '<div data-testid="world-ready-scene">Fake world scene</div>';
+
+          return {
+            canvas: document.createElement("canvas"),
+            dispose: () => {
+              renderHost.innerHTML = "";
+            }
+          };
+        }
+
+        return new Promise((resolve) => {
+          resolveRestartSceneLoad = (value) => {
+            renderHost.innerHTML = '<div data-testid="world-ready-scene">Restarted world scene</div>';
+            resolve(value);
+          };
+        });
+      }
+    };
+
+    eventBus.on("world.scene.ready", (event) => emittedEvents.push(event.type));
+
+    const app = await createGameApp({ host, eventBus, sliceGenerator, sceneLoader });
+    const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationAliasQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    await app.whenIdle();
+
+    (host.querySelector('[data-testid="restart-from-spawn"]') as HTMLButtonElement).click();
+    await Promise.resolve();
+    (host.querySelector('[data-testid="edit-location"]') as HTMLButtonElement).click();
+
+    resolveRestartSceneLoad?.({
+      canvas: document.createElement("canvas"),
+      dispose: () => {
+        host.querySelector('[data-testid="world-ready-scene"]')?.remove();
+      }
+    });
+
+    await app.whenIdle();
+
+    expect(app.getSnapshot().phase).toBe("location-select");
+    expect(emittedEvents).toEqual(["world.scene.ready"]);
     expect(host.querySelector('[data-testid="world-ready-scene"]')).toBeNull();
   });
 });

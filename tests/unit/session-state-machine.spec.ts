@@ -218,6 +218,95 @@ describe("session state machine", () => {
     expect(retriedState.error).toBeNull();
   });
 
+  it("retries a recoverable scene-load failure from the cached manifest path when slice context already exists", () => {
+    const handoff = createWorldGenerationRequest(
+      {
+        query: "San Francisco, CA",
+        normalizedQuery: "san francisco, ca",
+        placeName: "San Francisco, CA",
+        sessionKey: "san-francisco-ca-story-1-1",
+        reuseKey: "san-francisco-ca"
+      },
+      () => "2026-04-07T00:00:00.000Z"
+    );
+    const loadErrorState = transitionSessionState(
+      transitionSessionState(
+        transitionSessionState(createInitialSessionState(), {
+          type: "location.resolve.succeeded",
+          identity: handoff.location,
+          handoff
+        }),
+        {
+          type: "world.manifest.ready",
+          manifest,
+          spawnCandidate: manifest.spawnCandidates[0]
+        }
+      ),
+      {
+        type: "world.load.failed",
+        failure: {
+          ok: false,
+          code: "WORLD_SCENE_LOAD_FAILED",
+          stage: "world-loading",
+          message: "The world could not finish loading.",
+          recoverable: true,
+          placeName: "San Francisco, CA",
+          details: {
+            reason: "scene-bootstrap"
+          }
+        }
+      }
+    );
+
+    const retriedState = transitionSessionState(loadErrorState, {
+      type: "world.retry.requested"
+    });
+
+    expect(retriedState.phase).toBe("world-loading");
+    expect(retriedState.sliceManifest).toBe(manifest);
+    expect(retriedState.spawnCandidate).toBe(manifest.spawnCandidates[0]);
+    expect(retriedState.error).toBeNull();
+  });
+
+  it("preserves the active slice context when restart is requested from a ready world", () => {
+    const handoff = createWorldGenerationRequest(
+      {
+        query: "San Francisco, CA",
+        normalizedQuery: "san francisco, ca",
+        placeName: "San Francisco, CA",
+        sessionKey: "san-francisco-ca-story-1-1",
+        reuseKey: "san-francisco-ca"
+      },
+      () => "2026-04-07T00:00:00.000Z"
+    );
+    const readyState = transitionSessionState(
+      transitionSessionState(
+        transitionSessionState(createInitialSessionState(), {
+          type: "location.resolve.succeeded",
+          identity: handoff.location,
+          handoff
+        }),
+        {
+          type: "world.manifest.ready",
+          manifest,
+          spawnCandidate: manifest.spawnCandidates[0]
+        }
+      ),
+      { type: "world.scene.ready" }
+    );
+
+    const restartedState = transitionSessionState(readyState, {
+      type: "world.restart.requested"
+    });
+
+    expect(restartedState.phase).toBe("world-restarting");
+    expect(restartedState.sessionIdentity).toEqual(readyState.sessionIdentity);
+    expect(restartedState.handoff).toEqual(handoff);
+    expect(restartedState.sliceManifest).toBe(manifest);
+    expect(restartedState.spawnCandidate).toBe(manifest.spawnCandidates[0]);
+    expect(restartedState.error).toBeNull();
+  });
+
   it("normalizes valid queries and returns typed recoverable failures for invalid ones", () => {
     expect(normalizeLocationQuery("  Times   Square  ")).toBe("Times Square");
     expect(validateLocationQuery("San Francisco")).toEqual({

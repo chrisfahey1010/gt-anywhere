@@ -75,6 +75,7 @@ describe("app bootstrap smoke", () => {
     const host = document.querySelector("#app") as HTMLElement;
     const eventBus = new GameEventBus();
     let readyMilestone: string | null = null;
+    let readyCount = 0;
     let receivedSpawnCandidate: SpawnCandidate | null = null;
     const sliceGenerator: WorldSliceGenerator = {
       generate: async () => ({
@@ -100,6 +101,7 @@ describe("app bootstrap smoke", () => {
 
     eventBus.on("world.scene.ready", (event) => {
       readyMilestone = event.readinessMilestone;
+      readyCount += 1;
     });
 
     const app = await createGameApp({ host, eventBus, sliceGenerator, sceneLoader });
@@ -126,5 +128,15 @@ describe("app bootstrap smoke", () => {
       }
     });
     expect(readyMilestone).toBe("controllable-vehicle");
+    expect(readyCount).toBe(1);
+
+    (host.querySelector('[data-testid="restart-from-spawn"]') as HTMLButtonElement).click();
+    await app.whenIdle();
+
+    expect(app.getSnapshot().phase).toBe("world-ready");
+    expect(host.textContent).toContain("Slice ready");
+    expect(host.querySelector('[data-testid="world-ready-scene"]')).not.toBeNull();
+    expect(readyMilestone).toBe("controllable-vehicle");
+    expect(readyCount).toBe(2);
   });
 });

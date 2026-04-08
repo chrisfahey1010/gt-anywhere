@@ -21,7 +21,7 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
   await expect(page.getByTestId("loading-feedback")).toContainText("Slice ready for San Francisco, CA.");
   await expect(canvas).toBeVisible();
   await expect(canvas).toHaveAttribute("data-ready-milestone", "controllable-vehicle");
-  await expect(canvas).toHaveAttribute("data-active-camera", "FollowCamera");
+  await expect(canvas).toHaveAttribute("data-active-camera", /Camera$/);
   await expect(canvas).toHaveAttribute("data-starter-vehicle-id", /starter-vehicle-/);
 
   const startingDistance = Number((await canvas.getAttribute("data-starter-vehicle-distance")) ?? "0");
@@ -39,6 +39,31 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
   await page.keyboard.up("w");
 
   await expect(page.getByTestId("edit-location")).toBeVisible();
+
+  await page.getByTestId("restart-from-spawn").click();
+  await expect(page.getByTestId("loading-feedback")).toContainText("Slice ready for San Francisco, CA.");
+  await expect(canvas).toHaveAttribute("data-ready-milestone", "controllable-vehicle");
+
+  await expect
+    .poll(
+      async () => Number((await canvas.getAttribute("data-starter-vehicle-distance")) ?? "0"),
+      {
+        timeout: 5000
+      }
+    )
+    .toBeLessThan(0.25);
+
+  await canvas.click();
+  await page.keyboard.down("w");
+  await expect
+    .poll(
+      async () => Number((await canvas.getAttribute("data-starter-vehicle-distance")) ?? "0"),
+      {
+        timeout: 5000
+      }
+    )
+    .toBeGreaterThan(0.5);
+  await page.keyboard.up("w");
 });
 
 test("shows a recoverable error for an unresolvable query", async ({ page }) => {

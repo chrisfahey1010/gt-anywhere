@@ -18,7 +18,7 @@ import {
   type WorldLoadFailure
 } from "../../world/generation/world-load-failure";
 import { DefaultWorldSliceGenerator, type WorldSliceGenerator } from "../../world/generation/world-slice-generator";
-import type { SliceManifest } from "../../world/chunks/slice-manifest";
+import type { SliceManifest, SpawnCandidate } from "../../world/chunks/slice-manifest";
 import type { WorldSceneHandle, WorldSceneLoader } from "../../rendering/scene/create-world-scene";
 
 export interface CreateGameAppOptions {
@@ -96,6 +96,11 @@ function createAppHosts(host: HTMLElement): {
   return { renderHost, shellHost };
 }
 
+interface CachedWorldLoadData {
+  manifest: SliceManifest;
+  spawnCandidate: SpawnCandidate;
+}
+
 export async function createGameApp(options: CreateGameAppOptions): Promise<GameApp> {
   const logger = options.logger ?? createLogger();
   const resolver = options.resolver ?? new LocationResolver();
@@ -108,6 +113,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     host: shellHost,
     onSubmit: handleSubmit,
     onEdit: handleEdit,
+    onRestart: handleRestart,
     onRetry: handleRetry
   });
 
@@ -175,40 +181,24 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     render();
   };
 
-  const runWorldLoad = async (request: WorldGenerationRequest): Promise<void> => {
-    const startedAtMs = now();
-    const loadId = ++activeLoadId;
+  const beginLoadAttempt = (): { startedAtMs: number; loadId: number } => ({
+    startedAtMs: now(),
+    loadId: ++activeLoadId
+  });
 
-    eventBus.emit({ type: "world.generation.started", request });
-    logger.info("world.generation.started", {
-      placeName: request.location.placeName,
-      sessionKey: request.location.sessionKey,
-      sliceSeed: request.sliceSeed
-    });
-
-    state = transitionSessionState(state, { type: "world.generation.started" });
-    render();
-
-    const result = await sliceGenerator.generate(request);
-
-    if (loadId !== activeLoadId) {
-      return;
-    }
-
-    if (!result.ok) {
-      emitLoadFailure(request, result, startedAtMs);
-      return;
-    }
-
-    const manifest = getStoredManifest(sliceGenerator, result.manifest);
-
+  const emitManifestReady = (
+    request: WorldGenerationRequest,
+    manifest: SliceManifest,
+    spawnCandidate: SpawnCandidate,
+    startedAtMs: number
+  ): void => {
     const manifestDurationMs = now() - startedAtMs;
 
     eventBus.emit({
       type: "world.manifest.ready",
       request,
       manifest,
-      spawnCandidate: result.spawnCandidate,
+      spawnCandidate,
       durationMs: manifestDurationMs
     });
     logger.info("world.manifest.ready", {
@@ -222,10 +212,18 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     state = transitionSessionState(state, {
       type: "world.manifest.ready",
       manifest,
-      spawnCandidate: result.spawnCandidate
+      spawnCandidate
     });
     render();
+  };
 
+  const loadWorldScene = async (
+    request: WorldGenerationRequest,
+    manifest: SliceManifest,
+    spawnCandidate: SpawnCandidate,
+    startedAtMs: number,
+    loadId: number
+  ): Promise<void> => {
     try {
       disposeWorldScene();
       const activeSceneLoader = await getSceneLoader();
@@ -233,7 +231,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
       worldScene = await activeSceneLoader.load({
         renderHost,
         manifest,
-        spawnCandidate: result.spawnCandidate
+        spawnCandidate
       });
 
       if (loadId !== activeLoadId) {
@@ -268,6 +266,65 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     }
   };
 
+  const resolveCachedWorldLoadData = (): CachedWorldLoadData | null => {
+    const manifest =
+      state.sliceManifest ??
+      (state.sessionIdentity === null ? null : sliceGenerator.getStoredManifestByReuseKey?.(state.sessionIdentity.reuseKey) ?? null);
+    const spawnCandidate = state.spawnCandidate ?? manifest?.spawnCandidates[0] ?? null;
+
+    if (manifest === null || spawnCandidate === null) {
+      return null;
+    }
+
+    return { manifest, spawnCandidate };
+  };
+
+  const runGeneratedWorldLoad = async (request: WorldGenerationRequest): Promise<void> => {
+    const { startedAtMs, loadId } = beginLoadAttempt();
+
+    eventBus.emit({ type: "world.generation.started", request });
+    logger.info("world.generation.started", {
+      placeName: request.location.placeName,
+      sessionKey: request.location.sessionKey,
+      sliceSeed: request.sliceSeed
+    });
+
+    state = transitionSessionState(state, { type: "world.generation.started" });
+    render();
+
+    const result = await sliceGenerator.generate(request);
+
+    if (loadId !== activeLoadId) {
+      return;
+    }
+
+    if (!result.ok) {
+      emitLoadFailure(request, result, startedAtMs);
+      return;
+    }
+
+    const manifest = getStoredManifest(sliceGenerator, result.manifest);
+
+    emitManifestReady(request, manifest, result.spawnCandidate, startedAtMs);
+    await loadWorldScene(request, manifest, result.spawnCandidate, startedAtMs, loadId);
+  };
+
+  const runCachedWorldLoad = async (
+    request: WorldGenerationRequest,
+    cachedWorldLoadData: CachedWorldLoadData
+  ): Promise<void> => {
+    const { startedAtMs, loadId } = beginLoadAttempt();
+
+    emitManifestReady(request, cachedWorldLoadData.manifest, cachedWorldLoadData.spawnCandidate, startedAtMs);
+    await loadWorldScene(
+      request,
+      cachedWorldLoadData.manifest,
+      cachedWorldLoadData.spawnCandidate,
+      startedAtMs,
+      loadId
+    );
+  };
+
   const finishSuccess = async (handoff: WorldGenerationRequest): Promise<void> => {
     eventBus.emit({ type: "session.location.resolved", identity: handoff.location });
     logger.info("session.location.resolved", {
@@ -289,7 +346,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     });
     render();
 
-    await runWorldLoad(handoff);
+    await runGeneratedWorldLoad(handoff);
   };
 
   const finishFailure = (query: string, failure: LocationResolveFailure): void => {
@@ -321,11 +378,30 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     }
 
     const request = state.handoff;
+    const cachedWorldLoadData = resolveCachedWorldLoadData();
 
     state = transitionSessionState(state, { type: "world.retry.requested" });
     render();
 
-    settlePendingWork(runWorldLoad(request));
+    settlePendingWork(cachedWorldLoadData === null ? runGeneratedWorldLoad(request) : runCachedWorldLoad(request, cachedWorldLoadData));
+  }
+
+  function handleRestart(): void {
+    if (state.phase !== "world-ready" || state.handoff === null) {
+      return;
+    }
+
+    const request = state.handoff;
+    const cachedWorldLoadData = resolveCachedWorldLoadData();
+
+    if (cachedWorldLoadData === null) {
+      return;
+    }
+
+    state = transitionSessionState(state, { type: "world.restart.requested" });
+    render();
+
+    settlePendingWork(runCachedWorldLoad(request, cachedWorldLoadData));
   }
 
   function handleSubmit(query: string): void {
@@ -333,6 +409,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
       state.phase === "location-resolving" ||
       state.phase === "world-generation-requested" ||
       state.phase === "world-generating" ||
+      state.phase === "world-restarting" ||
       state.phase === "world-loading"
     ) {
       return;

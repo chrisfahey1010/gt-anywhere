@@ -13,6 +13,7 @@ export type SessionPhase =
   | "location-resolving"
   | "world-generation-requested"
   | "world-generating"
+  | "world-restarting"
   | "world-loading"
   | "world-ready"
   | "world-load-error"
@@ -34,6 +35,7 @@ export type SessionEvent =
   | { type: "app.boot.completed" }
   | { type: "location.submit.requested"; query: string }
   | { type: "location.edit.requested" }
+  | { type: "world.restart.requested" }
   | { type: "world.retry.requested" }
   | {
       type: "location.resolve.succeeded";
@@ -126,6 +128,17 @@ export function transitionSessionState(state: SessionState, event: SessionEvent)
         error: event.failure
       };
 
+    case "world.restart.requested":
+      if (state.phase !== "world-ready") {
+        return state;
+      }
+
+      return {
+        ...state,
+        phase: "world-restarting",
+        error: null
+      };
+
     case "location.resolve.failed":
       return {
         ...state,
@@ -148,7 +161,7 @@ export function transitionSessionState(state: SessionState, event: SessionEvent)
     case "world.retry.requested":
       return {
         ...state,
-        phase: "world-generating",
+        phase: state.sliceManifest !== null && state.spawnCandidate !== null ? "world-loading" : "world-generating",
         error: null
       };
 

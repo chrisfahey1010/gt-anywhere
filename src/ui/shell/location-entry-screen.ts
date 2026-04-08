@@ -4,6 +4,7 @@ interface LocationEntryScreenOptions {
   host: HTMLElement;
   onSubmit(query: string): void;
   onEdit(): void;
+  onRestart(): void;
   onRetry(): void;
 }
 
@@ -23,20 +24,24 @@ export class LocationEntryScreen {
 
   private readonly onEdit: () => void;
 
+  private readonly onRestart: () => void;
+
   private readonly onRetry: () => void;
 
   constructor(options: LocationEntryScreenOptions) {
     this.host = options.host;
     this.onSubmit = options.onSubmit;
     this.onEdit = options.onEdit;
+    this.onRestart = options.onRestart;
     this.onRetry = options.onRetry;
   }
 
   render(state: SessionState): void {
     const isResolving = state.phase === "location-resolving";
     const isGenerating = state.phase === "world-generation-requested" || state.phase === "world-generating";
+    const isRestarting = state.phase === "world-restarting";
     const isLoading = state.phase === "world-loading";
-    const isBusy = isResolving || isGenerating || isLoading;
+    const isBusy = isResolving || isGenerating || isRestarting || isLoading;
     const isReady = state.phase === "world-ready";
     const isRecoverableLoadError = state.phase === "world-load-error";
     const disableInput = isBusy;
@@ -47,6 +52,8 @@ export class LocationEntryScreen {
       ? "Resolving your location..."
       : isGenerating && placeName
         ? `Generating slice for ${placeName}...`
+        : isRestarting && placeName
+          ? `Restarting from spawn in ${placeName}...`
         : isLoading && placeName
           ? `Loading slice for ${placeName}...`
           : isReady && placeName
@@ -57,11 +64,14 @@ export class LocationEntryScreen {
     const submitLabel = isResolving
       ? "Resolving..."
       : isBusy
-        ? "Loading..."
+        ? isRestarting
+          ? "Restarting..."
+          : "Loading..."
         : state.phase === "error"
           ? "Try Again"
           : "Start Session";
     const showEdit = state.phase === "error" || isBusy || isReady || isRecoverableLoadError;
+    const showRestart = isReady;
     const showRetry = isRecoverableLoadError;
 
     this.host.innerHTML = `
@@ -87,6 +97,7 @@ export class LocationEntryScreen {
             />
             <div class="action-row">
               <button class="primary-action" type="submit" ${disableInput ? "disabled" : ""}>${submitLabel}</button>
+              ${showRestart ? '<button class="secondary-action" type="button" data-testid="restart-from-spawn">Restart from spawn</button>' : ""}
               ${showRetry ? '<button class="secondary-action" type="button" data-testid="retry-load">Retry load</button>' : ""}
               ${showEdit ? '<button class="secondary-action" type="button" data-testid="edit-location">Edit location</button>' : ""}
             </div>
@@ -101,6 +112,7 @@ export class LocationEntryScreen {
     const form = this.host.querySelector("form");
     const input = this.host.querySelector("input");
     const editButton = this.host.querySelector('[data-testid="edit-location"]');
+    const restartButton = this.host.querySelector('[data-testid="restart-from-spawn"]');
     const retryButton = this.host.querySelector('[data-testid="retry-load"]');
 
     form?.addEventListener("submit", (event) => {
@@ -115,6 +127,10 @@ export class LocationEntryScreen {
 
     editButton?.addEventListener("click", () => {
       this.onEdit();
+    });
+
+    restartButton?.addEventListener("click", () => {
+      this.onRestart();
     });
 
     retryButton?.addEventListener("click", () => {
