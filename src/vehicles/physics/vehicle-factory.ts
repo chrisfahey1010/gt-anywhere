@@ -30,8 +30,10 @@ export interface VehicleTuning {
 }
 
 export interface CreateVehicleOptions {
+  metadata?: Record<string, unknown>;
   scene: Scene;
   parent: TransformNode;
+  runtimeName?: string;
   spawnCandidate: SpawnCandidate;
   controller: PlayerVehicleController;
   tuning: VehicleTuning;
@@ -52,11 +54,11 @@ export async function loadTuningProfile(vehicleType: string): Promise<VehicleTun
 }
 
 export function createVehicleFactory(options: CreateVehicleOptions): StarterVehicleRuntime {
-  const { scene, parent, spawnCandidate, controller, tuning } = options;
+  const { controller, metadata, parent, runtimeName, scene, spawnCandidate, tuning } = options;
   const { width, height, length } = tuning.dimensions;
 
   const vehicleMesh = MeshBuilder.CreateBox(
-    `vehicle-${spawnCandidate.id}-${Date.now()}`,
+    runtimeName ?? `starter-vehicle-${spawnCandidate.id}`,
     { width, height, depth: length },
     scene
   );
@@ -71,7 +73,9 @@ export function createVehicleFactory(options: CreateVehicleOptions): StarterVehi
   vehicleMesh.isVisible = false;
   vehicleMesh.metadata = {
     bodyStyle: tuning.model.bodyStyle,
-    tuningName: tuning.name
+    runtimeName: vehicleMesh.name,
+    tuningName: tuning.name,
+    ...metadata
   };
 
   const material = new StandardMaterial(`vehicle-material-${spawnCandidate.id}`, scene);

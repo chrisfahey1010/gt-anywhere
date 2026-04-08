@@ -169,4 +169,179 @@ describe("player possession runtime", () => {
     expect(runtime.getStoredVehicle()).toBe(exitedVehicle);
     runtime.dispose();
   });
+
+  it("keeps exact re-entry deterministic when another hijackable vehicle is also nearby", () => {
+    const ground = createGround();
+    const storedVehicle = createVehicle("starter-vehicle", new Vector3(0, 1.7, 0), Vector3.Zero());
+    const hijackableVehicle = createVehicle("hijackable-vehicle", new Vector3(1.6, 1.7, 1.2), Vector3.Zero());
+    const runtime = createPlayerPossessionRuntime({
+      blockingMeshes: [],
+      getInteractableVehicles: () => [hijackableVehicle],
+      parent: root,
+      scene,
+      sliceBounds: {
+        minX: -20,
+        maxX: 20,
+        minZ: -20,
+        maxZ: 20
+      },
+      surfaceMeshes: [ground]
+    });
+    runtime.bindActiveVehicle(storedVehicle);
+
+    expect(
+      runtime.update(
+        {
+          interactionRequested: true,
+          onFootMovement: { forward: 0, right: 0 },
+          switchVehicleRequested: false,
+          vehicleControls: {
+            throttle: 0,
+            brake: 0,
+            steering: 0,
+            handbrake: false,
+            lookX: 0,
+            lookY: 0,
+            lookInputSource: "none"
+          }
+        },
+        1 / 60
+      ).transition
+    ).toBe("exited");
+
+    runtime.getOnFootRuntime()?.mesh.position.copyFromFloats(0, runtime.getOnFootRuntime()!.mesh.position.y, -1.6);
+
+    const update = runtime.update(
+      {
+        interactionRequested: true,
+        onFootMovement: { forward: 0, right: 0 },
+        switchVehicleRequested: false,
+        vehicleControls: {
+          throttle: 0,
+          brake: 0,
+          steering: 0,
+          handbrake: false,
+          lookX: 0,
+          lookY: 0,
+          lookInputSource: "none"
+        }
+      },
+      1 / 60
+    );
+
+    expect(update.transition).toBe("reentered");
+    expect(runtime.getMode()).toBe("vehicle");
+    expect(runtime.getStoredVehicle()).toBeNull();
+    runtime.dispose();
+  });
+
+  it("starts a short hijack handoff and only transfers after the timer completes", () => {
+    const ground = createGround();
+    const storedVehicle = createVehicle("starter-vehicle", new Vector3(0, 1.7, 0), Vector3.Zero());
+    const hijackableVehicle = createVehicle("hijackable-vehicle", new Vector3(0, 1.7, 2.6), Vector3.Zero());
+    const runtime = createPlayerPossessionRuntime({
+      blockingMeshes: [],
+      getInteractableVehicles: () => [hijackableVehicle],
+      hijackDurationSeconds: 0.5,
+      parent: root,
+      scene,
+      sliceBounds: {
+        minX: -20,
+        maxX: 20,
+        minZ: -20,
+        maxZ: 20
+      },
+      surfaceMeshes: [ground]
+    });
+    runtime.bindActiveVehicle(storedVehicle);
+
+    expect(
+      runtime.update(
+        {
+          interactionRequested: true,
+          onFootMovement: { forward: 0, right: 0 },
+          switchVehicleRequested: false,
+          vehicleControls: {
+            throttle: 0,
+            brake: 0,
+            steering: 0,
+            handbrake: false,
+            lookX: 0,
+            lookY: 0,
+            lookInputSource: "none"
+          }
+        },
+        1 / 60
+      ).transition
+    ).toBe("exited");
+
+    runtime.getOnFootRuntime()?.mesh.position.copyFromFloats(0.8, runtime.getOnFootRuntime()!.mesh.position.y, 1.4);
+
+    const startedHijack = runtime.update(
+      {
+        interactionRequested: true,
+        onFootMovement: { forward: 0, right: 0 },
+        switchVehicleRequested: false,
+        vehicleControls: {
+          throttle: 0,
+          brake: 0,
+          steering: 0,
+          handbrake: false,
+          lookX: 0,
+          lookY: 0,
+          lookInputSource: "none"
+        }
+      },
+      1 / 60
+    );
+
+    expect(startedHijack.transition).toBe("hijack-started");
+    expect(runtime.getMode()).toBe("on-foot");
+    expect(runtime.getStoredVehicle()).toBe(storedVehicle);
+
+    expect(
+      runtime.update(
+        {
+          interactionRequested: true,
+          onFootMovement: { forward: 0, right: 0 },
+          switchVehicleRequested: false,
+          vehicleControls: {
+            throttle: 0,
+            brake: 0,
+            steering: 0,
+            handbrake: false,
+            lookX: 0,
+            lookY: 0,
+            lookInputSource: "none"
+          }
+        },
+        0.2
+      ).transition
+    ).toBe("none");
+
+    const completedHijack = runtime.update(
+      {
+        interactionRequested: false,
+        onFootMovement: { forward: 0, right: 0 },
+        switchVehicleRequested: false,
+        vehicleControls: {
+          throttle: 0,
+          brake: 0,
+          steering: 0,
+          handbrake: false,
+          lookX: 0,
+          lookY: 0,
+          lookInputSource: "none"
+        }
+      },
+      0.31
+    );
+
+    expect(completedHijack.transition).toBe("hijacked");
+    expect(completedHijack.targetVehicle).toBe(hijackableVehicle);
+    expect(runtime.getMode()).toBe("vehicle");
+    expect(runtime.getOnFootRuntime()).toBeNull();
+    expect(runtime.getStoredVehicle()).toBeNull();
+    runtime.dispose();
+  });
 });

@@ -29,6 +29,7 @@ export interface CreateVehicleManagerOptions {
 export interface VehicleManager {
   getActiveVehicle(): ManagedVehicleRuntime;
   cycleVehicle(): Promise<ManagedVehicleRuntime>;
+  setActiveVehicle(vehicle: ManagedVehicleRuntime): ManagedVehicleRuntime;
   switchVehicle(vehicleType: string): Promise<ManagedVehicleRuntime>;
   onVehicleSwitched(listener: (event: VehicleSwitchedEvent) => void): () => void;
   dispose(): void;
@@ -156,6 +157,11 @@ export function createVehicleManager(options: CreateVehicleManagerOptions): Vehi
   return {
     getActiveVehicle: () => activeVehicle,
     cycleVehicle,
+    setActiveVehicle: (vehicle) => {
+      activeVehicle = vehicle;
+
+      return activeVehicle;
+    },
     switchVehicle,
     onVehicleSwitched: (listener) => {
       listeners.add(listener);

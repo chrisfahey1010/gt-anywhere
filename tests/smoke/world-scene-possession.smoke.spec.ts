@@ -132,9 +132,9 @@ describe("world scene possession smoke", () => {
     expect(canvas.dataset.onFootActorId).toBe("on-foot-actor");
 
     possessionRuntime.getOnFootRuntime()!.mesh.position.copyFromFloats(
-      0.4,
+      0,
       possessionRuntime.getOnFootRuntime()!.mesh.position.y,
-      -0.4
+      -0.8
     );
     window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE" }));
     currentInputFrame = controller.captureInputFrame();

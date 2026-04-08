@@ -164,4 +164,35 @@ describe("vehicle manager", () => {
     expect(switchedVehicle.vehicleType).toBe("sedan");
     expect(manager.getActiveVehicle().vehicleType).toBe("sedan");
   });
+
+  it("can transfer the active vehicle without disposing the abandoned runtime", () => {
+    const starterVehicle = createManagedVehicleRuntime({
+      vehicleType: "sedan",
+      tuning: sedanTuning,
+      runtime: createRuntime()
+    });
+    const hijackedVehicle = createManagedVehicleRuntime({
+      vehicleType: "sports-car",
+      tuning: sportsCarTuning,
+      runtime: createRuntime()
+    });
+    const manager = createVehicleManager({
+      activeVehicle: starterVehicle,
+      availableVehicleTypes: ["sedan", "sports-car"],
+      loadTuningProfile: vi.fn(async (vehicleType: string) =>
+        vehicleType === "sports-car" ? sportsCarTuning : sedanTuning
+      ),
+      spawnVehicle: vi.fn(({ vehicleType, tuning }: { vehicleType: string; tuning: VehicleTuning }) =>
+        createManagedVehicleRuntime({
+          vehicleType,
+          tuning,
+          runtime: createRuntime()
+        })
+      )
+    });
+
+    expect(manager.setActiveVehicle(hijackedVehicle)).toBe(hijackedVehicle);
+    expect(manager.getActiveVehicle()).toBe(hijackedVehicle);
+    expect(starterVehicle.dispose).not.toHaveBeenCalled();
+  });
 });

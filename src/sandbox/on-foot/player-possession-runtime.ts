@@ -3,8 +3,13 @@ import type { SliceBounds } from "../../world/chunks/slice-manifest";
 import type { PlayerInputFrame, VehicleControlState } from "../../vehicles/controllers/player-vehicle-controller";
 import { findSafeExitPosition } from "./exit-placement";
 import { createOnFootRuntime, type OnFootRuntime } from "./on-foot-runtime";
+import {
+  resolveVehicleInteractionTarget,
+  type VehicleInteractionCandidate
+} from "./vehicle-interaction-target";
 
 const DEFAULT_EXIT_SPEED_THRESHOLD = 1.5;
+const DEFAULT_HIJACK_DURATION_SECONDS = 0.6;
 const DEFAULT_REENTRY_RANGE = 3;
 const DEFAULT_ON_FOOT_HEIGHT = 1.8;
 const GAMEPAD_LOOK_YAW_SPEED = 2.4;
@@ -25,6 +30,10 @@ export interface PossessableVehicleRuntime {
 }
 
 export interface CreatePlayerPossessionRuntimeOptions {
+  getInteractableVehicles?: () => readonly PossessableVehicleRuntime[];
+  hijackDurationSeconds?: number;
+  interactionHalfAngleRadians?: number;
+  interactionRange?: number;
   scene: Scene;
   parent: TransformNode;
   sliceBounds: SliceBounds;
@@ -35,7 +44,8 @@ export interface CreatePlayerPossessionRuntimeOptions {
 }
 
 export interface PlayerPossessionRuntimeUpdate {
-  transition: "none" | "exited" | "reentered";
+  targetVehicle?: PossessableVehicleRuntime;
+  transition: "none" | "exited" | "hijack-started" | "hijacked" | "reentered";
 }
 
 export interface PlayerPossessionRuntime {
@@ -78,19 +88,16 @@ function applyLookDelta(
   };
 }
 
-function isWithinReentryRange(onFootRuntime: OnFootRuntime, vehicle: PossessableVehicleRuntime, reentryRange: number): boolean {
-  const deltaX = onFootRuntime.mesh.position.x - vehicle.mesh.position.x;
-  const deltaZ = onFootRuntime.mesh.position.z - vehicle.mesh.position.z;
-
-  return Math.sqrt(deltaX * deltaX + deltaZ * deltaZ) <= reentryRange;
-}
-
 export function createPlayerPossessionRuntime(options: CreatePlayerPossessionRuntimeOptions): PlayerPossessionRuntime {
   const {
     blockingMeshes,
     exitSpeedThreshold = DEFAULT_EXIT_SPEED_THRESHOLD,
+    getInteractableVehicles = () => [],
+    hijackDurationSeconds = DEFAULT_HIJACK_DURATION_SECONDS,
+    interactionHalfAngleRadians = Math.PI / 4,
     parent,
     reentryRange = DEFAULT_REENTRY_RANGE,
+    interactionRange = reentryRange,
     sliceBounds,
     surfaceMeshes
   } = options;
@@ -98,6 +105,8 @@ export function createPlayerPossessionRuntime(options: CreatePlayerPossessionRun
   let mode: "vehicle" | "on-foot" = "vehicle";
   let onFootRuntime: OnFootRuntime | null = null;
   let storedVehicle: PossessableVehicleRuntime | null = null;
+  let hijackTarget: PossessableVehicleRuntime | null = null;
+  let hijackTimeRemaining = 0;
   let facingYaw = 0;
   let lookPitch = 0;
 
@@ -166,7 +175,60 @@ export function createPlayerPossessionRuntime(options: CreatePlayerPossessionRun
         sliceBounds
       });
 
-      if (frame.interactionRequested && storedVehicle !== null && isWithinReentryRange(onFootRuntime, storedVehicle, reentryRange)) {
+      const interactionCandidates: VehicleInteractionCandidate<PossessableVehicleRuntime>[] = [];
+
+      if (storedVehicle !== null) {
+        interactionCandidates.push({
+          isStoredVehicle: true,
+          vehicle: storedVehicle
+        });
+      }
+
+      getInteractableVehicles().forEach((vehicle) => {
+        if (vehicle === storedVehicle || vehicle === activeVehicle) {
+          return;
+        }
+
+        interactionCandidates.push({
+          isStoredVehicle: false,
+          vehicle
+        });
+      });
+
+      const interactionTarget = frame.interactionRequested
+        ? resolveVehicleInteractionTarget({
+            actorPosition: onFootRuntime.mesh.position,
+            candidates: interactionCandidates,
+            facingYaw,
+            interactionHalfAngleRadians,
+            interactionRange
+          })
+        : null;
+
+      if (hijackTarget !== null) {
+        hijackTimeRemaining = Math.max(0, hijackTimeRemaining - deltaSeconds);
+
+        if (hijackTimeRemaining > 0) {
+          return { transition: "none" };
+        }
+
+        const resolvedHijackTarget = hijackTarget;
+
+        onFootRuntime.dispose();
+        onFootRuntime = null;
+        storedVehicle = null;
+        hijackTarget = null;
+        hijackTimeRemaining = 0;
+        mode = "vehicle";
+        lookPitch = 0;
+
+        return {
+          targetVehicle: resolvedHijackTarget,
+          transition: "hijacked"
+        };
+      }
+
+      if (interactionTarget?.isStoredVehicle) {
         onFootRuntime.dispose();
         onFootRuntime = null;
         storedVehicle = null;
@@ -176,12 +238,24 @@ export function createPlayerPossessionRuntime(options: CreatePlayerPossessionRun
         return { transition: "reentered" };
       }
 
+      if (interactionTarget !== null) {
+        hijackTarget = interactionTarget.vehicle;
+        hijackTimeRemaining = hijackDurationSeconds;
+
+        return {
+          targetVehicle: interactionTarget.vehicle,
+          transition: "hijack-started"
+        };
+      }
+
       return { transition: "none" };
     },
     dispose: () => {
       onFootRuntime?.dispose();
       onFootRuntime = null;
       storedVehicle = null;
+      hijackTarget = null;
+      hijackTimeRemaining = 0;
       activeVehicle = null;
       mode = "vehicle";
       facingYaw = 0;

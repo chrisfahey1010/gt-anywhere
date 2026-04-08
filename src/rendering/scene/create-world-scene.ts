@@ -21,6 +21,10 @@ import {
   type PlayerPossessionRuntime
 } from "../../sandbox/on-foot/player-possession-runtime";
 import { createWorldSceneRuntimeError } from "../../world/generation/world-load-failure";
+import {
+  createHijackableVehicleSpawns,
+  type HijackableVehicleSpawn
+} from "./hijackable-vehicle-spawns";
 import { createStarterVehicleCamera } from "../../vehicles/cameras/create-starter-vehicle-camera";
 import {
   createPlayerVehicleController,
@@ -30,6 +34,7 @@ import {
 import {
   createManagedVehicleRuntime,
   createVehicleManager,
+  type ManagedVehicleRuntime,
   type VehicleManager
 } from "../../vehicles/physics/vehicle-manager";
 import { createVehicleFactory, loadTuningProfile } from "../../vehicles/physics/vehicle-factory";
@@ -225,6 +230,22 @@ async function enableStaticPhysics(scene: Scene, meshes: AbstractMesh[]): Promis
   );
 }
 
+function createHijackableSpawnCandidate(
+  spawn: HijackableVehicleSpawn,
+  starterVehicle: SpawnCandidate["starterVehicle"]
+): SpawnCandidate {
+  return {
+    chunkId: spawn.chunkId,
+    headingDegrees: spawn.headingDegrees,
+    id: spawn.id,
+    laneIndex: 0,
+    position: spawn.position,
+    roadId: spawn.roadId,
+    starterVehicle,
+    surface: "road"
+  };
+}
+
 export class BabylonWorldSceneLoader implements WorldSceneLoader {
   async load(options: CreateWorldSceneOptions): Promise<WorldSceneHandle> {
     const { renderHost, manifest, spawnCandidate } = options;
@@ -336,7 +357,8 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       );
     }
 
-    let vehicleManager: VehicleManager;
+    let vehicleManager: VehicleManager | null = null;
+    let hijackableVehicles: ManagedVehicleRuntime[] = [];
 
     try {
       const defaultTuning = await loadTuningProfile(DEFAULT_VEHICLE_TYPE);
@@ -348,6 +370,10 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
           parent: worldRoot,
           spawnCandidate,
           controller,
+          metadata: {
+            interactionRole: "active"
+          },
+          runtimeName: `starter-vehicle-${spawnCandidate.id}`,
           tuning: defaultTuning
         })
       });
@@ -362,12 +388,42 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
             parent: worldRoot,
             spawnCandidate,
             controller,
+            metadata: {
+              interactionRole: "active"
+            },
+            runtimeName: `starter-vehicle-${spawnCandidate.id}`,
             tuning
         })
       });
+
+      const hijackableSpawns = createHijackableVehicleSpawns(manifest, spawnCandidate);
+      hijackableVehicles = await Promise.all(
+        hijackableSpawns.map(async (secondarySpawn) => {
+          const tuning = await loadTuningProfile(secondarySpawn.vehicleType);
+
+          return createManagedVehicleRuntime({
+            vehicleType: secondarySpawn.vehicleType,
+            tuning,
+            runtime: createVehicleFactory({
+              scene,
+              parent: worldRoot,
+              spawnCandidate: createHijackableSpawnCandidate(secondarySpawn, spawnCandidate.starterVehicle),
+              controller,
+              metadata: {
+                interactionRole: "hijackable"
+              },
+              runtimeName: `hijackable-vehicle-${secondarySpawn.id}`,
+              tuning
+            })
+          });
+        })
+      );
+
       controller.bindVehicle(vehicleManager.getActiveVehicle().mesh);
     } catch (error) {
       controller.dispose();
+      hijackableVehicles.forEach((vehicle) => vehicle.dispose());
+      vehicleManager?.dispose();
       throw createWorldSceneRuntimeError(
         "STARTER_VEHICLE_SPAWN_FAILED",
         "vehicle-spawning",
@@ -379,9 +435,23 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       );
     }
 
+    if (vehicleManager === null) {
+      controller.dispose();
+      hijackableVehicles.forEach((vehicle) => vehicle.dispose());
+      throw createWorldSceneRuntimeError(
+        "STARTER_VEHICLE_SPAWN_FAILED",
+        "vehicle-spawning",
+        "The starter vehicle could not be spawned.",
+        {
+          spawnCandidateId: spawnCandidate.id
+        }
+      );
+    }
+
     let currentInputFrame: PlayerInputFrame = controller.captureInputFrame();
     const possessionRuntime: PlayerPossessionRuntime = createPlayerPossessionRuntime({
       blockingMeshes: exitBlockingMeshes,
+      getInteractableVehicles: () => hijackableVehicles,
       parent: worldRoot,
       scene,
       sliceBounds: manifest.bounds,
@@ -393,6 +463,36 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     let removeVehicleSwitchListener = (): void => {};
     let vehicleSwitchInFlight = false;
     const spawnPoint = new Vector3(spawnCandidate.position.x, spawnCandidate.position.y, spawnCandidate.position.z);
+
+    const completeHijack = (nextVehicle: ManagedVehicleRuntime): void => {
+      const previousVehicle = vehicleManager.getActiveVehicle();
+
+      if (previousVehicle === nextVehicle) {
+        return;
+      }
+
+      hijackableVehicles = hijackableVehicles.filter((vehicle) => vehicle !== nextVehicle);
+
+      if (!hijackableVehicles.includes(previousVehicle)) {
+        hijackableVehicles = [...hijackableVehicles, previousVehicle];
+      }
+
+      vehicleManager.setActiveVehicle(nextVehicle);
+      possessionRuntime.bindActiveVehicle(nextVehicle);
+      controller.bindVehicle(nextVehicle.mesh);
+      camera.setVehicleTarget(nextVehicle.mesh);
+      scene.activeCamera = camera;
+
+      if (scene.metadata && typeof scene.metadata === "object") {
+        Object.assign(scene.metadata, {
+          hijackableVehicleCount: hijackableVehicles.length,
+          hijackableVehicleIds: hijackableVehicles.map((vehicle) => vehicle.mesh.name)
+        });
+      }
+
+      canvas.dataset.hijackableVehicleCount = String(hijackableVehicles.length);
+      syncCanvasTelemetry();
+    };
 
     const cycleActiveVehicle = async (): Promise<void> => {
       if (!canSwitchControlledVehicle({ possessionMode: possessionRuntime.getMode(), vehicleSwitchInFlight })) {
@@ -452,6 +552,10 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         controller.bindVehicle(vehicleManager.getActiveVehicle().mesh);
         camera.setVehicleTarget(vehicleManager.getActiveVehicle().mesh);
         scene.activeCamera = camera;
+      }
+
+      if (possessionUpdate.transition === "hijacked" && possessionUpdate.targetVehicle) {
+        completeHijack(possessionUpdate.targetVehicle as ManagedVehicleRuntime);
       }
 
       if (
@@ -520,14 +624,17 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       physicsReady: scene.isPhysicsEnabled(),
       starterVehicleId: vehicleManager.getActiveVehicle().mesh.name,
       availableVehicleTypes: [...AVAILABLE_VEHICLE_TYPES],
-        activeVehicleType: vehicleManager.getActiveVehicle().vehicleType,
-        spawnRoadId: spawnCandidate.roadId,
-        spawnChunkId: spawnCandidate.chunkId,
-        readinessMilestone: "controllable-vehicle",
-        activeCamera: camera.name
-      };
+      activeVehicleType: vehicleManager.getActiveVehicle().vehicleType,
+      activeCamera: camera.name,
+      hijackableVehicleCount: hijackableVehicles.length,
+      hijackableVehicleIds: hijackableVehicles.map((vehicle) => vehicle.mesh.name),
+      readinessMilestone: "controllable-vehicle",
+      spawnRoadId: spawnCandidate.roadId,
+      spawnChunkId: spawnCandidate.chunkId
+    };
     canvas.dataset.readyMilestone = "controllable-vehicle";
     canvas.dataset.activeCamera = camera.name;
+    canvas.dataset.hijackableVehicleCount = String(hijackableVehicles.length);
     canvas.dataset.spawnRoadId = spawnCandidate.roadId;
     canvas.dataset.spawnChunkId = spawnCandidate.chunkId;
     canvas.dataset.starterVehicleId = vehicleManager.getActiveVehicle().mesh.name;
@@ -554,6 +661,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         controller.dispose();
         possessionRuntime.dispose();
         vehicleManager.dispose();
+        hijackableVehicles.forEach((vehicle) => vehicle.dispose());
         physicsAggregates.forEach((aggregate) => aggregate.dispose());
         scene.dispose();
         engine.dispose();

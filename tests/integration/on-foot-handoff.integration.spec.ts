@@ -115,9 +115,9 @@ describe("on-foot handoff integration", () => {
     expect(currentInputFrame.onFootMovement.forward).toBe(1);
 
     possessionRuntime.getOnFootRuntime()!.mesh.position.copyFromFloats(
-      0.4,
+      0,
       possessionRuntime.getOnFootRuntime()!.mesh.position.y,
-      -0.4
+      -0.8
     );
     window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE" }));
     currentInputFrame = controller.captureInputFrame();
