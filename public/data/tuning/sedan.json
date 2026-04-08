@@ -1,0 +1,16 @@
+{
+  "name": "Sedan",
+  "mass": 1400,
+  "color": "#f25f5c",
+  "maxForwardSpeed": 18,
+  "maxReverseSpeed": 7,
+  "maxTurnRate": 1.8,
+  "model": {
+    "bodyStyle": "sedan"
+  },
+  "dimensions": {
+    "width": 1.8,
+    "height": 1.4,
+    "length": 4.5
+  }
+}

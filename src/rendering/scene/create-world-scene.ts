@@ -22,13 +22,20 @@ import {
   type PlayerVehicleController
 } from "../../vehicles/controllers/player-vehicle-controller";
 import {
-  createStarterVehicle,
-  type StarterVehicleRuntime
-} from "../../vehicles/physics/create-starter-vehicle";
+  createManagedVehicleRuntime,
+  createVehicleManager,
+  type VehicleManager
+} from "../../vehicles/physics/vehicle-manager";
+import { createVehicleFactory, loadTuningProfile } from "../../vehicles/physics/vehicle-factory";
+
+const AVAILABLE_VEHICLE_TYPES = ["sedan", "sports-car", "heavy-truck"] as const;
+const DEFAULT_VEHICLE_TYPE = AVAILABLE_VEHICLE_TYPES[0];
 
 export interface WorldSceneHandle {
   canvas: HTMLCanvasElement;
+  cycleVehicle?(): Promise<void>;
   dispose(): void;
+  switchVehicle?(vehicleType: string): Promise<void>;
 }
 
 export interface CreateWorldSceneOptions {
@@ -311,15 +318,36 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       );
     }
 
-    let starterVehicle: StarterVehicleRuntime;
+    let vehicleManager: VehicleManager;
 
     try {
-      starterVehicle = createStarterVehicle({
-        scene,
-        parent: worldRoot,
-        spawnCandidate,
-        controller
+      const defaultTuning = await loadTuningProfile(DEFAULT_VEHICLE_TYPE);
+      const activeVehicle = createManagedVehicleRuntime({
+        vehicleType: DEFAULT_VEHICLE_TYPE,
+        tuning: defaultTuning,
+        runtime: createVehicleFactory({
+          scene,
+          parent: worldRoot,
+          spawnCandidate,
+          controller,
+          tuning: defaultTuning
+        })
       });
+
+      vehicleManager = createVehicleManager({
+        activeVehicle,
+        availableVehicleTypes: AVAILABLE_VEHICLE_TYPES,
+        loadTuningProfile,
+        spawnVehicle: ({ tuning }) =>
+          createVehicleFactory({
+            scene,
+            parent: worldRoot,
+            spawnCandidate,
+            controller,
+            tuning
+        })
+      });
+      controller.bindVehicle(vehicleManager.getActiveVehicle().mesh);
     } catch (error) {
       controller.dispose();
       throw createWorldSceneRuntimeError(
@@ -334,28 +362,78 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     }
 
     let camera: ReturnType<typeof createStarterVehicleCamera>;
+    let removeVehicleSwitchListener = (): void => {};
+    let vehicleSwitchInFlight = false;
     const spawnPoint = new Vector3(spawnCandidate.position.x, spawnCandidate.position.y, spawnCandidate.position.z);
 
+    const cycleActiveVehicle = async (): Promise<void> => {
+      if (vehicleSwitchInFlight) {
+        return;
+      }
+
+      vehicleSwitchInFlight = true;
+
+      try {
+        await vehicleManager.cycleVehicle();
+        syncCanvasTelemetry();
+      } finally {
+        vehicleSwitchInFlight = false;
+      }
+    };
+
+    const switchActiveVehicle = async (vehicleType: string): Promise<void> => {
+      if (vehicleSwitchInFlight) {
+        return;
+      }
+
+      vehicleSwitchInFlight = true;
+
+      try {
+        await vehicleManager.switchVehicle(vehicleType);
+        syncCanvasTelemetry();
+      } finally {
+        vehicleSwitchInFlight = false;
+      }
+    };
+
     const updateStarterVehicle = (): void => {
-      starterVehicle.update();
+      if (!vehicleSwitchInFlight && controller.consumeSwitchVehicleRequest()) {
+        void cycleActiveVehicle();
+      }
+
+      vehicleManager.getActiveVehicle().update();
     };
 
     const syncCanvasTelemetry = (): void => {
-      const deltaX = starterVehicle.mesh.position.x - spawnPoint.x;
-      const deltaZ = starterVehicle.mesh.position.z - spawnPoint.z;
+      const activeVehicle = vehicleManager.getActiveVehicle();
+      const deltaX = activeVehicle.mesh.position.x - spawnPoint.x;
+      const deltaZ = activeVehicle.mesh.position.z - spawnPoint.z;
       const horizontalDistance = Math.sqrt(deltaX * deltaX + deltaZ * deltaZ);
 
+      if (scene.metadata) {
+        scene.metadata.starterVehicleId = activeVehicle.mesh.name;
+        scene.metadata.activeVehicleType = activeVehicle.vehicleType;
+      }
+
       canvas.dataset.starterVehicleDistance = horizontalDistance.toFixed(3);
-      canvas.dataset.starterVehicleX = starterVehicle.mesh.position.x.toFixed(3);
-      canvas.dataset.starterVehicleZ = starterVehicle.mesh.position.z.toFixed(3);
+      canvas.dataset.starterVehicleId = activeVehicle.mesh.name;
+      canvas.dataset.starterVehicleX = activeVehicle.mesh.position.x.toFixed(3);
+      canvas.dataset.starterVehicleZ = activeVehicle.mesh.position.z.toFixed(3);
+      canvas.dataset.activeVehicleType = activeVehicle.vehicleType;
     };
 
     try {
-      camera = createStarterVehicleCamera({ scene, target: starterVehicle.mesh, controller });
+      camera = createStarterVehicleCamera({ scene, target: vehicleManager.getActiveVehicle().mesh, controller });
+      removeVehicleSwitchListener = vehicleManager.onVehicleSwitched((event) => {
+        controller.unbindVehicle();
+        controller.bindVehicle(event.activeVehicle.mesh);
+        camera.setVehicleTarget(event.activeVehicle.mesh);
+        syncCanvasTelemetry();
+      });
       scene.registerBeforeRender(updateStarterVehicle);
     } catch (error) {
       controller.dispose();
-      starterVehicle.dispose();
+      vehicleManager.dispose();
       throw createWorldSceneRuntimeError(
         "STARTER_VEHICLE_POSSESSION_FAILED",
         "vehicle-possession",
@@ -373,7 +451,9 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       staticSurfaceRootName: staticSurfaceRoot.name,
       chunkRootNames: chunkRoots.map((chunkRoot) => chunkRoot.name),
       physicsReady: scene.isPhysicsEnabled(),
-      starterVehicleId: starterVehicle.mesh.name,
+      starterVehicleId: vehicleManager.getActiveVehicle().mesh.name,
+      availableVehicleTypes: [...AVAILABLE_VEHICLE_TYPES],
+      activeVehicleType: vehicleManager.getActiveVehicle().vehicleType,
       spawnRoadId: spawnCandidate.roadId,
       spawnChunkId: spawnCandidate.chunkId,
       readinessMilestone: "controllable-vehicle",
@@ -383,7 +463,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     canvas.dataset.activeCamera = camera.getClassName();
     canvas.dataset.spawnRoadId = spawnCandidate.roadId;
     canvas.dataset.spawnChunkId = spawnCandidate.chunkId;
-    canvas.dataset.starterVehicleId = starterVehicle.mesh.name;
+    canvas.dataset.starterVehicleId = vehicleManager.getActiveVehicle().mesh.name;
     syncCanvasTelemetry();
 
     const resize = (): void => {
@@ -398,16 +478,19 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
 
     return {
       canvas,
+      cycleVehicle: cycleActiveVehicle,
       dispose: () => {
         window.removeEventListener("resize", resize);
         scene.unregisterBeforeRender(updateStarterVehicle);
+        removeVehicleSwitchListener();
         controller.dispose();
-        starterVehicle.dispose();
+        vehicleManager.dispose();
         physicsAggregates.forEach((aggregate) => aggregate.dispose());
         scene.dispose();
         engine.dispose();
         canvas.remove();
-      }
+      },
+      switchVehicle: switchActiveVehicle
     };
   }
 }

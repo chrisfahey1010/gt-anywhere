@@ -1,7 +1,5 @@
 .gemini/
 .opencode/
-_bmad/
-_bmad-output/
 
 # OS files
 .DS_Store

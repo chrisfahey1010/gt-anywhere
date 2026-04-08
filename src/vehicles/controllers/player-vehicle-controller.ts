@@ -16,8 +16,11 @@ export interface VehicleGamepadState {
 }
 
 export interface PlayerVehicleController {
+  bindVehicle(vehicle: object): void;
+  consumeSwitchVehicleRequest(): boolean;
   getState(): VehicleControlState;
   dispose(): void;
+  unbindVehicle(): void;
 }
 
 export interface CreatePlayerVehicleControllerOptions {
@@ -30,6 +33,7 @@ const BRAKE_KEYS = new Set(["KeyS", "ArrowDown"]);
 const STEER_LEFT_KEYS = new Set(["KeyA", "ArrowLeft"]);
 const STEER_RIGHT_KEYS = new Set(["KeyD", "ArrowRight"]);
 const HANDBRAKE_KEYS = new Set(["Space"]);
+const SWITCH_VEHICLE_KEYS = new Set(["Tab"]);
 const GAMEPAD_STEERING_DEADZONE = 0.15;
 
 function createEmptyState(): VehicleControlState {
@@ -66,12 +70,20 @@ export function createPlayerVehicleController(
   const eventTarget = options.eventTarget ?? window;
   const gamepadProvider = options.gamepadProvider ?? (() => Array.from(navigator.getGamepads?.() ?? []));
   const activeKeys = new Set<string>();
+  let boundVehicle: object | null = null;
+  let switchVehicleRequested = false;
 
   let mouseLookX = 0;
   let mouseLookY = 0;
 
   const handleKeyDown = (event: Event): void => {
     if (event instanceof KeyboardEvent) {
+      if (SWITCH_VEHICLE_KEYS.has(event.code)) {
+        event.preventDefault();
+        switchVehicleRequested = true;
+        return;
+      }
+
       activeKeys.add(event.code);
     }
   };
@@ -94,7 +106,24 @@ export function createPlayerVehicleController(
   eventTarget.addEventListener("mousemove", handleMouseMove);
 
   return {
+    bindVehicle: (vehicle: object) => {
+      boundVehicle = vehicle;
+    },
+    consumeSwitchVehicleRequest: () => {
+      const shouldSwitch = boundVehicle !== null && switchVehicleRequested;
+
+      switchVehicleRequested = false;
+
+      return shouldSwitch;
+    },
     getState: () => {
+      if (boundVehicle === null) {
+        mouseLookX = 0;
+        mouseLookY = 0;
+
+        return createEmptyState();
+      }
+
       const keyboardState = createEmptyState();
 
       if ([...THROTTLE_KEYS].some((code) => activeKeys.has(code))) {
@@ -162,11 +191,17 @@ export function createPlayerVehicleController(
     },
     dispose: () => {
       activeKeys.clear();
+      boundVehicle = null;
       mouseLookX = 0;
       mouseLookY = 0;
+      switchVehicleRequested = false;
       eventTarget.removeEventListener("keydown", handleKeyDown);
       eventTarget.removeEventListener("keyup", handleKeyUp);
       eventTarget.removeEventListener("mousemove", handleMouseMove);
+    },
+    unbindVehicle: () => {
+      boundVehicle = null;
+      switchVehicleRequested = false;
     }
   };
 }

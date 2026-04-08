@@ -5,6 +5,8 @@ import { PlayerVehicleController } from "../../src/vehicles/controllers/player-v
 
 function createMockController(overrides: Partial<ReturnType<PlayerVehicleController["getState"]>> = {}): PlayerVehicleController {
   return {
+    bindVehicle: () => {},
+    consumeSwitchVehicleRequest: () => false,
     getState: () => ({
       throttle: 0,
       brake: 0,
@@ -15,7 +17,8 @@ function createMockController(overrides: Partial<ReturnType<PlayerVehicleControl
       lookInputSource: "none",
       ...overrides
     }),
-    dispose: () => {}
+    dispose: () => {},
+    unbindVehicle: () => {}
   };
 }
 
@@ -192,6 +195,32 @@ describe("starter vehicle camera", () => {
 
     expect(camera.position.z).toBeGreaterThan(target.position.z);
     expect(camera.getTarget().z).toBeLessThan(target.position.z);
+  });
+
+  it("retargets to a replacement vehicle without breaking the active camera", () => {
+    const initialTarget = MeshBuilder.CreateBox("starter-vehicle", { size: 1 }, scene);
+    const replacementTarget = MeshBuilder.CreateBox("replacement-vehicle", { size: 1 }, scene);
+    replacementTarget.position.copyFromFloats(24, 0, 12);
+    const camera = createStarterVehicleCamera({
+      scene,
+      target: initialTarget,
+      controller: createMockController()
+    });
+
+    for (let frame = 0; frame < 5; frame += 1) {
+      scene.render();
+    }
+
+    const initialLookAt = camera.getTarget().clone();
+    camera.setVehicleTarget(replacementTarget);
+
+    for (let frame = 0; frame < 10; frame += 1) {
+      scene.render();
+    }
+
+    expect(scene.activeCamera).toBe(camera);
+    expect(Vector3.Distance(camera.getTarget(), initialLookAt)).toBeGreaterThan(5);
+    expect(camera.getTarget().z).toBeGreaterThan(initialLookAt.z);
   });
 
   it("keeps gamepad free-look response stable across frame times", () => {

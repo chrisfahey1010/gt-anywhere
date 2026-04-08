@@ -1,0 +1,16 @@
+{
+  "name": "Heavy Truck",
+  "mass": 5000,
+  "color": "#0000ff",
+  "maxForwardSpeed": 12,
+  "maxReverseSpeed": 5,
+  "maxTurnRate": 1.0,
+  "model": {
+    "bodyStyle": "heavy-truck"
+  },
+  "dimensions": {
+    "width": 2.5,
+    "height": 3.5,
+    "length": 7.0
+  }
+}

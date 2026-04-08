@@ -114,6 +114,7 @@ describe("starter vehicle camera integration", () => {
           getLinearVelocity: () => velocity.clone(),
           dispose: () => {}
         } as any;
+        controller.bindVehicle(target);
 
         const camera = createStarterVehicleCamera({ scene, target, controller });
 

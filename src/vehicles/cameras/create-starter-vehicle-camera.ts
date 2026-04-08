@@ -10,8 +10,13 @@ export interface CreateStarterVehicleCameraOptions {
   controller: PlayerVehicleController;
 }
 
-export function createStarterVehicleCamera(options: CreateStarterVehicleCameraOptions): TargetCamera {
+export interface StarterVehicleCamera extends TargetCamera {
+  setVehicleTarget(target: AbstractMesh): void;
+}
+
+export function createStarterVehicleCamera(options: CreateStarterVehicleCameraOptions): StarterVehicleCamera {
   const { scene, target, controller } = options;
+  let activeTarget = target;
 
   const baseFov = 0.9;
   const maxFov = 1.1;
@@ -31,7 +36,7 @@ export function createStarterVehicleCamera(options: CreateStarterVehicleCameraOp
   const mouseLookSensitivity = 0.01;
 
   const initialForward = new Vector3();
-  target.getDirectionToRef(FORWARD_AXIS, initialForward);
+  activeTarget.getDirectionToRef(FORWARD_AXIS, initialForward);
   initialForward.y = 0;
   if (initialForward.lengthSquared() === 0) {
     initialForward.copyFromFloats(0, 0, 1);
@@ -40,12 +45,12 @@ export function createStarterVehicleCamera(options: CreateStarterVehicleCameraOp
   }
 
   // Initialize slightly behind and above target.
-  const initialPos = target.position.subtract(initialForward.scale(distanceOffset)).add(new Vector3(0, heightOffset, 0));
+  const initialPos = activeTarget.position.subtract(initialForward.scale(distanceOffset)).add(new Vector3(0, heightOffset, 0));
   const camera = new TargetCamera("starter-vehicle-camera", initialPos, scene);
   camera.fov = baseFov;
 
   const currentVelocity = Vector3.Zero();
-  const currentLookAt = target.position.add(initialForward.scale(lookAheadDistance));
+  const currentLookAt = activeTarget.position.add(initialForward.scale(lookAheadDistance));
   const rawForward = initialForward.clone();
   const smoothedForward = initialForward.clone();
   const orbitForward = initialForward.clone();
@@ -71,13 +76,13 @@ export function createStarterVehicleCamera(options: CreateStarterVehicleCameraOp
     const stateLerpFactor = 1.0 - Math.pow(0.01, deltaTime);
 
     // 1. Determine velocity
-    if (target.physicsBody) {
-      target.physicsBody.getLinearVelocityToRef(currentVelocity);
+    if (activeTarget.physicsBody) {
+      activeTarget.physicsBody.getLinearVelocityToRef(currentVelocity);
     } else {
       currentVelocity.setAll(0);
     }
 
-    target.getDirectionToRef(FORWARD_AXIS, rawForward);
+    activeTarget.getDirectionToRef(FORWARD_AXIS, rawForward);
     rawForward.y = 0;
     if (rawForward.lengthSquared() === 0) {
       rawForward.copyFrom(smoothedForward);
@@ -141,7 +146,7 @@ export function createStarterVehicleCamera(options: CreateStarterVehicleCameraOp
     orbitForward.copyFrom(Vector3.TransformNormal(orbitForward, Matrix.RotationAxis(orbitRight, freeLookPitch)));
 
     // 5. Apply Position and Target
-    const targetPosition = target.position;
+    const targetPosition = activeTarget.position;
 
     // Blend between the normal chase view and a front-mounted reverse view.
     forwardCameraPos.copyFrom(targetPosition);
@@ -184,7 +189,28 @@ export function createStarterVehicleCamera(options: CreateStarterVehicleCameraOp
     camera.setTarget(currentLookAt);
   });
 
-  scene.activeCamera = camera;
+  const starterVehicleCamera = camera as StarterVehicleCamera;
+  starterVehicleCamera.setVehicleTarget = (nextTarget: AbstractMesh): void => {
+    activeTarget = nextTarget;
+    activeTarget.getDirectionToRef(FORWARD_AXIS, rawForward);
+    rawForward.y = 0;
 
-  return camera;
+    if (rawForward.lengthSquared() === 0) {
+      rawForward.copyFrom(smoothedForward);
+    } else {
+      rawForward.normalize();
+    }
+
+    smoothedForward.copyFrom(rawForward);
+    orbitForward.copyFrom(rawForward);
+    currentLookAt.copyFromFloats(
+      activeTarget.position.x + rawForward.x * lookAheadDistance,
+      activeTarget.position.y,
+      activeTarget.position.z + rawForward.z * lookAheadDistance
+    );
+  };
+
+  scene.activeCamera = starterVehicleCamera;
+
+  return starterVehicleCamera;
 }

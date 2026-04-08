@@ -1,0 +1,16 @@
+{
+  "name": "Sports Car",
+  "mass": 1200,
+  "color": "#ff0000",
+  "maxForwardSpeed": 25,
+  "maxReverseSpeed": 10,
+  "maxTurnRate": 2.2,
+  "model": {
+    "bodyStyle": "sports-car"
+  },
+  "dimensions": {
+    "width": 1.8,
+    "height": 1.2,
+    "length": 4.2
+  }
+}
