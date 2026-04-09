@@ -132,6 +132,7 @@ describe("world slice loading integration", () => {
     expect(snapshot.phase).toBe("world-ready");
     expect(snapshot.sessionIdentity?.placeName).toBeTruthy();
     expect(snapshot.sliceManifest?.sliceId).toBeTruthy();
+    expect(snapshot.sliceManifest?.traffic?.vehicles.length ?? 0).toBeGreaterThan(0);
     expect(snapshot.spawnCandidate?.id).toMatch(/^spawn-/);
     expect(manifestStore.getBySliceId(snapshot.sliceManifest?.sliceId ?? "")).toEqual(snapshot.sliceManifest);
     expect(host.querySelector('[data-testid="world-ready-scene"]')?.textContent).toContain(

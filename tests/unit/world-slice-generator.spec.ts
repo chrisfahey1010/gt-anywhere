@@ -12,6 +12,7 @@ import {
   type GeoDataPreset,
   type GeoDataPresetSource
 } from "../../src/world/generation/world-slice-generator";
+import { createHijackableVehicleSpawns } from "../../src/rendering/scene/hijackable-vehicle-spawns";
 import {
   validAddressLikeLocationQuery,
   validLocationAliasQuery,
@@ -294,5 +295,86 @@ describe("world slice generator", () => {
       ])
     );
     expect(result.manifest.roads.map((road) => road.displayName)).not.toContain(result.manifest.location.reuseKey);
+  });
+
+  it("adds a deterministic serializable traffic plan derived from the slice roads and chunk bounds", async () => {
+    const generator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: createPresetSource(),
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const request = await createRequest(validLocationAliasQuery);
+    const firstResult = await generator.generate(request);
+    const secondResult = await generator.generate(request);
+
+    expect(firstResult.ok).toBe(true);
+    expect(secondResult.ok).toBe(true);
+
+    if (!firstResult.ok || !secondResult.ok) {
+      return;
+    }
+
+    expect(JSON.parse(JSON.stringify(firstResult.manifest.traffic))).toMatchObject({
+      vehicles: expect.arrayContaining([
+        expect.objectContaining({
+          chunkId: expect.any(String),
+          direction: expect.stringMatching(/forward|reverse/),
+          headingDegrees: expect.any(Number),
+          id: expect.any(String),
+          position: {
+            x: expect.any(Number),
+            y: expect.any(Number),
+            z: expect.any(Number)
+          },
+          roadId: expect.any(String),
+          speedScale: expect.any(Number),
+          startDistance: expect.any(Number),
+          vehicleType: expect.any(String)
+        })
+      ])
+    });
+    expect(firstResult.manifest.traffic?.vehicles.length ?? 0).toBeGreaterThan(0);
+    expect(firstResult.manifest.traffic).toEqual(secondResult.manifest.traffic);
+  });
+
+  it("keeps generated traffic clear of the starter spawn, slice edges, and hijackable vehicle placements", async () => {
+    const generator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: createPresetSource(),
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const request = await createRequest(validLocationAliasQuery);
+    const result = await generator.generate(request);
+
+    expect(result.ok).toBe(true);
+
+    if (!result.ok) {
+      return;
+    }
+
+    const trafficVehicles = result.manifest.traffic?.vehicles ?? [];
+    const hijackableSpawns = createHijackableVehicleSpawns(result.manifest, result.spawnCandidate);
+
+    expect(trafficVehicles.length).toBeGreaterThan(0);
+
+    trafficVehicles.forEach((trafficVehicle) => {
+      const starterDistance = Math.hypot(
+        trafficVehicle.position.x - result.spawnCandidate.position.x,
+        trafficVehicle.position.z - result.spawnCandidate.position.z
+      );
+
+      expect(trafficVehicle.position.x).toBeGreaterThan(result.manifest.bounds.minX + 10);
+      expect(trafficVehicle.position.x).toBeLessThan(result.manifest.bounds.maxX - 10);
+      expect(trafficVehicle.position.z).toBeGreaterThan(result.manifest.bounds.minZ + 10);
+      expect(trafficVehicle.position.z).toBeLessThan(result.manifest.bounds.maxZ - 10);
+      expect(starterDistance).toBeGreaterThanOrEqual(36);
+
+      hijackableSpawns.forEach((secondarySpawn) => {
+        const secondaryDistance = Math.hypot(
+          trafficVehicle.position.x - secondarySpawn.position.x,
+          trafficVehicle.position.z - secondarySpawn.position.z
+        );
+
+        expect(secondaryDistance).toBeGreaterThanOrEqual(18);
+      });
+    });
   });
 });

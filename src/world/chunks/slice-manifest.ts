@@ -58,6 +58,26 @@ export interface SliceSceneMetadata {
   boundaryColor: string;
 }
 
+export type TrafficVehicleDirection = "forward" | "reverse";
+
+export type TrafficVehicleType = "sedan" | "sports-car" | "heavy-truck";
+
+export interface TrafficVehiclePlan {
+  id: string;
+  chunkId: string;
+  roadId: string;
+  position: SliceVector3;
+  headingDegrees: number;
+  direction: TrafficVehicleDirection;
+  startDistance: number;
+  speedScale: number;
+  vehicleType: TrafficVehicleType;
+}
+
+export interface SliceTrafficPlan {
+  vehicles: TrafficVehiclePlan[];
+}
+
 export interface SliceManifest {
   sliceId: string;
   generationVersion: string;
@@ -72,4 +92,5 @@ export interface SliceManifest {
   roads: SliceRoad[];
   spawnCandidates: SpawnCandidate[];
   sceneMetadata: SliceSceneMetadata;
+  traffic?: SliceTrafficPlan;
 }

@@ -3,8 +3,10 @@ import type {
   SliceChunk,
   SliceManifest,
   SliceRoad,
+  SliceTrafficPlan,
   SpawnCandidate
 } from "../chunks/slice-manifest";
+import { createTrafficPlan } from "../../traffic/planning/traffic-plan";
 import type { SessionLocationIdentity, WorldGenerationRequest } from "./location-resolver";
 import { InMemorySliceManifestStore, type SliceManifestStore } from "./slice-manifest-store";
 import { createWorldLoadFailure, type WorldLoadFailure } from "./world-load-failure";
@@ -262,6 +264,19 @@ function runSpawnPlanner(chunks: SliceChunk[], roads: SliceRoad[]): SpawnCandida
   ];
 }
 
+function createFallbackSpawnCandidate(chunks: SliceChunk[], roads: SliceRoad[]): SpawnCandidate {
+  return {
+    id: "spawn-chunk-0-0",
+    chunkId: chunks[0]?.id ?? "chunk-0-0",
+    roadId: roads[0]?.id ?? "road-0",
+    position: { x: 0, y: 0, z: 0 },
+    headingDegrees: 90,
+    surface: "road",
+    laneIndex: 0,
+    starterVehicle: createStarterVehicleSpawnPlan()
+  };
+}
+
 function createSliceManifest(
   request: WorldGenerationRequest,
   preset: GeoDataPreset,
@@ -269,6 +284,7 @@ function createSliceManifest(
   chunks: SliceChunk[],
   roads: SliceRoad[],
   spawnCandidates: SpawnCandidate[],
+  traffic: SliceTrafficPlan,
   generationVersion: string
 ): SliceManifest {
   return {
@@ -284,6 +300,7 @@ function createSliceManifest(
     chunks,
     roads,
     spawnCandidates,
+    traffic,
     sceneMetadata: {
       displayName: preset.displayName,
       districtName: preset.districtName,
@@ -361,6 +378,8 @@ export class DefaultWorldSliceGenerator implements WorldSliceGenerator {
       const roads = applyRoadDisplayNames(runPlayabilityPassPipeline(bounds, runRoadNormalizer(bounds, preset)));
       const chunks = runChunkAssembler(bounds, roads);
       const spawnCandidates = runSpawnPlanner(chunks, roads);
+      const primarySpawnCandidate = spawnCandidates[0] ?? createFallbackSpawnCandidate(chunks, roads);
+      const traffic = createTrafficPlan({ bounds, chunks, roads, spawnCandidate: primarySpawnCandidate });
       const manifest = createSliceManifest(
         request,
         preset,
@@ -368,6 +387,7 @@ export class DefaultWorldSliceGenerator implements WorldSliceGenerator {
         chunks,
         roads,
         spawnCandidates,
+        traffic,
         this.generationVersion
       );
 
@@ -376,16 +396,7 @@ export class DefaultWorldSliceGenerator implements WorldSliceGenerator {
       return {
         ok: true,
         manifest,
-        spawnCandidate: spawnCandidates[0] ?? {
-          id: "spawn-chunk-0-0",
-          chunkId: chunks[0]?.id ?? "chunk-0-0",
-          roadId: roads[0]?.id ?? "road-0",
-          position: { x: 0, y: 0, z: 0 },
-          headingDegrees: 90,
-          surface: "road",
-          laneIndex: 0,
-          starterVehicle: createStarterVehicleSpawnPlan()
-        }
+        spawnCandidate: primarySpawnCandidate
       };
     } catch (error) {
       return createWorldLoadFailure(
