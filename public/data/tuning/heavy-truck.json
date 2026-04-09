@@ -5,6 +5,10 @@
   "maxForwardSpeed": 12,
   "maxReverseSpeed": 5,
   "maxTurnRate": 1.0,
+  "damage": {
+    "durability": 180,
+    "impactSpeedThreshold": 10
+  },
   "model": {
     "bodyStyle": "heavy-truck"
   },

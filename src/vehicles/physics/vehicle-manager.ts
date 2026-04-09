@@ -1,8 +1,15 @@
 import { Quaternion, Vector3 } from "@babylonjs/core";
+import {
+  applyVehicleSwitchDamagePolicy,
+  applyVehicleTransferDamagePolicy,
+  createPristineVehicleDamageState,
+  type VehicleDamageState
+} from "../damage/vehicle-damage-policy";
 import type { StarterVehicleRuntime } from "./create-starter-vehicle";
 import type { VehicleTuning } from "./vehicle-factory";
 
 export interface ManagedVehicleRuntime extends StarterVehicleRuntime {
+  damageState: VehicleDamageState;
   vehicleType: string;
   tuning: VehicleTuning;
 }
@@ -14,6 +21,7 @@ export interface VehicleSwitchedEvent {
 }
 
 export interface CreateManagedVehicleRuntimeOptions {
+  damageState?: VehicleDamageState;
   vehicleType: string;
   tuning: VehicleTuning;
   runtime: StarterVehicleRuntime;
@@ -44,10 +52,11 @@ interface VehiclePhysicsSnapshot {
 }
 
 export function createManagedVehicleRuntime(options: CreateManagedVehicleRuntimeOptions): ManagedVehicleRuntime {
-  const { vehicleType, tuning, runtime } = options;
+  const { damageState, vehicleType, tuning, runtime } = options;
 
   return {
     ...runtime,
+    damageState: damageState ? applyVehicleTransferDamagePolicy(damageState) : createPristineVehicleDamageState(),
     vehicleType,
     tuning
   };
@@ -128,6 +137,7 @@ export function createVehicleManager(options: CreateVehicleManagerOptions): Vehi
     const tuning = await getTuning(vehicleType);
     const nextVehicleRuntime = spawnVehicle({ vehicleType, tuning });
     const nextVehicle = createManagedVehicleRuntime({
+      damageState: applyVehicleSwitchDamagePolicy(previousVehicle.damageState, tuning),
       vehicleType,
       tuning,
       runtime: nextVehicleRuntime

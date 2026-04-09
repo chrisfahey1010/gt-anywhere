@@ -1,4 +1,5 @@
 import type {
+  SliceBreakablePropPlan,
   SliceBounds,
   SliceChunk,
   SliceManifest,
@@ -9,6 +10,7 @@ import type {
 } from "../chunks/slice-manifest";
 import { createPedestrianPlan } from "../../pedestrians/planning/pedestrian-plan";
 import { createTrafficPlan } from "../../traffic/planning/traffic-plan";
+import { createBreakablePropPlan } from "../planning/breakable-prop-plan";
 import type { SessionLocationIdentity, WorldGenerationRequest } from "./location-resolver";
 import { InMemorySliceManifestStore, type SliceManifestStore } from "./slice-manifest-store";
 import { createWorldLoadFailure, type WorldLoadFailure } from "./world-load-failure";
@@ -288,6 +290,7 @@ function createSliceManifest(
   spawnCandidates: SpawnCandidate[],
   traffic: SliceTrafficPlan,
   pedestrians: SlicePedestrianPlan,
+  breakableProps: SliceBreakablePropPlan,
   generationVersion: string
 ): SliceManifest {
   return {
@@ -305,6 +308,7 @@ function createSliceManifest(
     spawnCandidates,
     traffic,
     pedestrians,
+    breakableProps,
     sceneMetadata: {
       displayName: preset.displayName,
       districtName: preset.districtName,
@@ -391,6 +395,14 @@ export class DefaultWorldSliceGenerator implements WorldSliceGenerator {
         spawnCandidate: primarySpawnCandidate,
         traffic
       });
+      const breakableProps = createBreakablePropPlan({
+        bounds,
+        chunks,
+        roads,
+        spawnCandidate: primarySpawnCandidate,
+        traffic,
+        pedestrians
+      });
       const manifest = createSliceManifest(
         request,
         preset,
@@ -400,6 +412,7 @@ export class DefaultWorldSliceGenerator implements WorldSliceGenerator {
         spawnCandidates,
         traffic,
         pedestrians,
+        breakableProps,
         this.generationVersion
       );
 

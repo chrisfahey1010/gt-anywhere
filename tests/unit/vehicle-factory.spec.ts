@@ -50,6 +50,10 @@ describe('Vehicle Factory & Tuning Profiles', () => {
         maxForwardSpeed: 25,
         maxReverseSpeed: 10,
         maxTurnRate: 2.2,
+        damage: {
+          durability: 60,
+          impactSpeedThreshold: 8
+        },
         model: { bodyStyle: 'sports-car' as const },
         dimensions: { width: 1.8, height: 1.2, length: 4.2 }
       };
@@ -84,6 +88,10 @@ describe('Vehicle Factory & Tuning Profiles', () => {
         maxForwardSpeed: 12,
         maxReverseSpeed: 5,
         maxTurnRate: 1.0,
+        damage: {
+          durability: 180,
+          impactSpeedThreshold: 10
+        },
         model: { bodyStyle: 'heavy-truck' as const },
         dimensions: { width: 2.5, height: 3.5, length: 7.0 }
       };
@@ -149,6 +157,10 @@ describe('Vehicle Factory & Tuning Profiles', () => {
           maxForwardSpeed: 25,
           maxReverseSpeed: 10,
           maxTurnRate: 2.2,
+          damage: {
+            durability: 60,
+            impactSpeedThreshold: 8
+          },
           model: { bodyStyle: 'sports-car' },
           dimensions: { width: 1.8, height: 1.2, length: 4.2 }
         }
@@ -166,6 +178,10 @@ describe('Vehicle Factory & Tuning Profiles', () => {
           maxForwardSpeed: 12,
           maxReverseSpeed: 5,
           maxTurnRate: 1.0,
+          damage: {
+            durability: 180,
+            impactSpeedThreshold: 10
+          },
           model: { bodyStyle: 'heavy-truck' },
           dimensions: { width: 2.5, height: 3.5, length: 7.0 }
         }

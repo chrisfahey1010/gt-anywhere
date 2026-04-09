@@ -19,6 +19,10 @@ export interface VehicleTuning {
   maxForwardSpeed: number;
   maxReverseSpeed: number;
   maxTurnRate: number;
+  damage: {
+    durability: number;
+    impactSpeedThreshold: number;
+  };
   model: {
     bodyStyle: "sedan" | "sports-car" | "heavy-truck";
   };

@@ -95,6 +95,22 @@ export interface SlicePedestrianPlan {
   pedestrians: PedestrianPlanEntry[];
 }
 
+export type BreakablePropType = "barrier" | "bollard" | "hydrant" | "short-post" | "signpost";
+
+export interface BreakablePropPlanEntry {
+  id: string;
+  chunkId: string;
+  roadId: string;
+  propType: BreakablePropType;
+  position: SliceVector3;
+  headingDegrees: number;
+  startDistance: number;
+}
+
+export interface SliceBreakablePropPlan {
+  props: BreakablePropPlanEntry[];
+}
+
 export interface SliceManifest {
   sliceId: string;
   generationVersion: string;
@@ -111,4 +127,5 @@ export interface SliceManifest {
   sceneMetadata: SliceSceneMetadata;
   traffic?: SliceTrafficPlan;
   pedestrians?: SlicePedestrianPlan;
+  breakableProps?: SliceBreakablePropPlan;
 }

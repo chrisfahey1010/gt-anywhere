@@ -29,6 +29,10 @@ function createTuning(vehicleType: ManagedVehicleRuntime["vehicleType"]): Vehicl
     maxForwardSpeed: 18,
     maxReverseSpeed: 7,
     maxTurnRate: 1.8,
+    damage: {
+      durability: vehicleType === "sports-car" ? 60 : 100,
+      impactSpeedThreshold: vehicleType === "sports-car" ? 8 : 7
+    },
     model: {
       bodyStyle: vehicleType === "sports-car" ? "sports-car" : "sedan"
     },

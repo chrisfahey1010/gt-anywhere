@@ -5,6 +5,7 @@ import { createWorldNavigationSnapshot, syncWorldSceneTelemetry } from "../../sr
 import { createTrafficSystem } from "../../src/traffic/runtime/traffic-system";
 import type { SliceManifest, SpawnCandidate } from "../../src/world/chunks/slice-manifest";
 import type { VehicleControlState } from "../../src/vehicles/controllers/player-vehicle-controller";
+import { createPristineVehicleDamageState } from "../../src/vehicles/damage/vehicle-damage-policy";
 import type { VehicleTuning } from "../../src/vehicles/physics/vehicle-factory";
 
 describe("traffic system smoke", () => {
@@ -120,6 +121,10 @@ describe("traffic system smoke", () => {
       maxForwardSpeed: 16,
       maxReverseSpeed: 7,
       maxTurnRate: 1.8,
+      damage: {
+        durability: 100,
+        impactSpeedThreshold: 7
+      },
       model: {
         bodyStyle: "sedan"
       },
@@ -147,11 +152,12 @@ describe("traffic system smoke", () => {
         parent: root,
         scene,
         spawnCandidate,
-        spawnTrafficVehicle: vi.fn(({ plan }) => {
+        spawnTrafficVehicle: vi.fn(({ plan, tuning }) => {
           let speed = 0;
           const position = new Vector3(plan.position.x, 1.7, plan.position.z);
 
           return {
+            damageState: createPristineVehicleDamageState(),
             dispose: () => {},
             id: plan.id,
             mesh: {
@@ -165,6 +171,8 @@ describe("traffic system smoke", () => {
                 getLinearVelocity: () => new Vector3(0, 0, speed)
               }
             },
+            tuning,
+            vehicleType: plan.vehicleType,
             update: (controls: VehicleControlState) => {
               speed = Math.max(0, speed + controls.throttle * 1.4 - controls.brake * 2.4);
               position.z += speed * 0.12;

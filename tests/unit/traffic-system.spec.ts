@@ -3,6 +3,7 @@ import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTrafficSystem } from "../../src/traffic/runtime/traffic-system";
 import type { VehicleControlState } from "../../src/vehicles/controllers/player-vehicle-controller";
+import { createPristineVehicleDamageState } from "../../src/vehicles/damage/vehicle-damage-policy";
 import type { SliceManifest, SpawnCandidate, TrafficVehiclePlan } from "../../src/world/chunks/slice-manifest";
 import type { VehicleTuning } from "../../src/vehicles/physics/vehicle-factory";
 
@@ -106,6 +107,10 @@ describe("traffic system", () => {
       maxForwardSpeed: 16,
       maxReverseSpeed: 7,
       maxTurnRate: 1.8,
+      damage: {
+        durability: 100,
+        impactSpeedThreshold: 7
+      },
       model: {
         bodyStyle: "sedan"
       },
@@ -147,7 +152,8 @@ describe("traffic system", () => {
       parent: root,
       scene,
       spawnCandidate,
-      spawnTrafficVehicle: vi.fn(({ plan }) => ({
+      spawnTrafficVehicle: vi.fn(({ plan, tuning }) => ({
+        damageState: createPristineVehicleDamageState(),
         dispose: () => {
           disposeCalls.push(plan.id);
         },
@@ -163,6 +169,8 @@ describe("traffic system", () => {
             getLinearVelocity: () => Vector3.Zero()
           }
         },
+        tuning,
+        vehicleType: plan.vehicleType,
         update: (controls: VehicleControlState) => {
           updateCalls.push(controls);
         }
@@ -223,7 +231,8 @@ describe("traffic system", () => {
       parent: root,
       scene,
       spawnCandidate,
-      spawnTrafficVehicle: vi.fn(({ plan }) => ({
+      spawnTrafficVehicle: vi.fn(({ plan, tuning }) => ({
+        damageState: createPristineVehicleDamageState(),
         dispose: () => {},
         id: plan.id,
         mesh: {
@@ -237,6 +246,8 @@ describe("traffic system", () => {
             getLinearVelocity: () => new Vector3(0, 0, 7)
           }
         },
+        tuning,
+        vehicleType: plan.vehicleType,
         update: (controls: VehicleControlState) => {
           updateCalls.push({ brake: controls.brake, throttle: controls.throttle });
         }

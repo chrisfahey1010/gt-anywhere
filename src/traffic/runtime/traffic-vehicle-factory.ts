@@ -1,5 +1,6 @@
 import { Vector3, type Scene, type TransformNode } from "@babylonjs/core";
 import type { TrafficVehiclePlan, SpawnCandidate } from "../../world/chunks/slice-manifest";
+import { createPristineVehicleDamageState, type VehicleDamageState } from "../../vehicles/damage/vehicle-damage-policy";
 import type { PlayerVehicleController, VehicleControlState } from "../../vehicles/controllers/player-vehicle-controller";
 import { createVehicleFactory, type VehicleTuning } from "../../vehicles/physics/vehicle-factory";
 
@@ -17,11 +18,14 @@ export interface TrafficVehiclePhysicsBody {
 }
 
 export interface TrafficVehicleRuntime {
+  damageState: VehicleDamageState;
   id: string;
   mesh: TrafficVehicleMesh;
   physicsAggregate: {
     body: TrafficVehiclePhysicsBody;
   };
+  tuning: VehicleTuning;
+  vehicleType: TrafficVehiclePlan["vehicleType"];
   update(controlState: VehicleControlState): void;
   dispose(): void;
 }
@@ -66,10 +70,13 @@ export function createTrafficVehicle(options: CreateTrafficVehicleOptions): Traf
   });
 
   return {
+    damageState: createPristineVehicleDamageState(),
     dispose: runtime.dispose,
     id: options.plan.id,
     mesh: runtime.mesh,
     physicsAggregate: runtime.physicsAggregate,
+    tuning: options.tuning,
+    vehicleType: options.plan.vehicleType,
     update: (controlState) => {
       runtime.update(controlState);
     }

@@ -42,5 +42,15 @@ describe("vehicle interaction policy", () => {
         }
       })
     ).toBe(false);
+
+    expect(
+      isVehicleHijackInteractionAllowed({
+        mesh: {
+          metadata: {
+            interactionRole: "breakable-prop"
+          }
+        }
+      })
+    ).toBe(false);
   });
 });

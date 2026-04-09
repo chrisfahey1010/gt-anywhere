@@ -467,4 +467,108 @@ describe("world slice generator", () => {
       });
     });
   });
+
+  it("adds a deterministic serializable breakable-prop plan derived from slice roads and chunk bounds", async () => {
+    const generator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: createPresetSource(),
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const request = await createRequest(validLocationAliasQuery);
+    const firstResult = await generator.generate(request);
+    const secondResult = await generator.generate(request);
+
+    expect(firstResult.ok).toBe(true);
+    expect(secondResult.ok).toBe(true);
+
+    if (!firstResult.ok || !secondResult.ok) {
+      return;
+    }
+
+    expect(JSON.parse(JSON.stringify(firstResult.manifest.breakableProps))).toMatchObject({
+      props: expect.arrayContaining([
+        expect.objectContaining({
+          chunkId: expect.any(String),
+          headingDegrees: expect.any(Number),
+          id: expect.any(String),
+          position: {
+            x: expect.any(Number),
+            y: expect.any(Number),
+            z: expect.any(Number)
+          },
+          propType: expect.stringMatching(/barrier|bollard|hydrant|short-post|signpost/),
+          roadId: expect.any(String),
+          startDistance: expect.any(Number)
+        })
+      ])
+    });
+
+    const breakableProps = firstResult.manifest.breakableProps?.props ?? [];
+
+    expect(breakableProps.length).toBeGreaterThan(0);
+    expect(breakableProps.length).toBeLessThanOrEqual(8);
+    expect(new Set(breakableProps.map((prop) => prop.id)).size).toBe(breakableProps.length);
+    expect(firstResult.manifest.breakableProps).toEqual(secondResult.manifest.breakableProps);
+  });
+
+  it("keeps generated breakable props clear of the starter spawn, slice edges, traffic starts, pedestrians, and hijackable vehicle placements", async () => {
+    const generator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: createPresetSource(),
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const request = await createRequest(validLocationAliasQuery);
+    const result = await generator.generate(request);
+
+    expect(result.ok).toBe(true);
+
+    if (!result.ok) {
+      return;
+    }
+
+    const breakableProps = result.manifest.breakableProps?.props ?? [];
+    const trafficVehicles = result.manifest.traffic?.vehicles ?? [];
+    const pedestrians = result.manifest.pedestrians?.pedestrians ?? [];
+    const hijackableSpawns = createHijackableVehicleSpawns(result.manifest, result.spawnCandidate);
+
+    expect(breakableProps.length).toBeGreaterThan(0);
+
+    breakableProps.forEach((prop) => {
+      const starterDistance = Math.hypot(
+        prop.position.x - result.spawnCandidate.position.x,
+        prop.position.z - result.spawnCandidate.position.z
+      );
+
+      expect(prop.position.x).toBeGreaterThan(result.manifest.bounds.minX + 14);
+      expect(prop.position.x).toBeLessThan(result.manifest.bounds.maxX - 14);
+      expect(prop.position.z).toBeGreaterThan(result.manifest.bounds.minZ + 14);
+      expect(prop.position.z).toBeLessThan(result.manifest.bounds.maxZ - 14);
+      expect(starterDistance).toBeGreaterThanOrEqual(34);
+
+      trafficVehicles.forEach((trafficVehicle) => {
+        const trafficDistance = Math.hypot(
+          prop.position.x - trafficVehicle.position.x,
+          prop.position.z - trafficVehicle.position.z
+        );
+
+        expect(trafficDistance).toBeGreaterThanOrEqual(18);
+      });
+
+      pedestrians.forEach((pedestrian) => {
+        const pedestrianDistance = Math.hypot(
+          prop.position.x - pedestrian.position.x,
+          prop.position.z - pedestrian.position.z
+        );
+
+        expect(pedestrianDistance).toBeGreaterThanOrEqual(16);
+      });
+
+      hijackableSpawns.forEach((secondarySpawn) => {
+        const secondaryDistance = Math.hypot(
+          prop.position.x - secondarySpawn.position.x,
+          prop.position.z - secondarySpawn.position.z
+        );
+
+        expect(secondaryDistance).toBeGreaterThanOrEqual(18);
+      });
+    });
+  });
 });

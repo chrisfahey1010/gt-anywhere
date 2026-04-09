@@ -5,6 +5,10 @@
   "maxForwardSpeed": 25,
   "maxReverseSpeed": 10,
   "maxTurnRate": 2.2,
+  "damage": {
+    "durability": 60,
+    "impactSpeedThreshold": 8
+  },
   "model": {
     "bodyStyle": "sports-car"
   },

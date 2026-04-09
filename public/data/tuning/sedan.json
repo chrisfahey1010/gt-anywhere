@@ -5,6 +5,10 @@
   "maxForwardSpeed": 18,
   "maxReverseSpeed": 7,
   "maxTurnRate": 1.8,
+  "damage": {
+    "durability": 100,
+    "impactSpeedThreshold": 7
+  },
   "model": {
     "bodyStyle": "sedan"
   },

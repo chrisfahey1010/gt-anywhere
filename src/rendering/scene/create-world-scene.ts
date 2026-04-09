@@ -55,6 +55,12 @@ import {
   updateScenePedestrians
 } from "./pedestrian-scene-runtime";
 import {
+  applyChaosSceneTelemetry,
+  createSceneChaosRuntime,
+  disposeSceneChaosRuntime,
+  updateSceneChaos
+} from "./chaos-scene-runtime";
+import {
   REPLAY_VEHICLE_TYPES,
   type ReplaySelection,
   type ReplayStarterVehicleType
@@ -503,7 +509,24 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       throw error;
     }
 
+    let chaosRuntime: ReturnType<typeof createSceneChaosRuntime>;
+
+    try {
+      chaosRuntime = createSceneChaosRuntime({
+        manifest,
+        parent: worldRoot,
+        scene
+      });
+    } catch (error) {
+      controller.dispose();
+      disposeScenePedestrianSystem(pedestrianSystem);
+      trafficSystem?.dispose();
+      hijackableVehicles.forEach((vehicle) => vehicle.dispose());
+      vehicleManager.dispose();
+      throw error;
+    }
     let currentInputFrame: PlayerInputFrame = controller.captureInputFrame();
+    let recentChaosEvents: ReturnType<typeof updateSceneChaos> = [];
     let recentPedestrianEvents: ReturnType<typeof updateScenePedestrians> = [];
     const possessionRuntime: PlayerPossessionRuntime = createPlayerPossessionRuntime({
       blockingMeshes: exitBlockingMeshes,
@@ -651,9 +674,20 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         onFootActor: possessionRuntime.getOnFootRuntime(),
         pedestrianSystem
       });
+      const chaosEvents = updateSceneChaos({
+        activeVehicle: vehicleManager.getActiveVehicle(),
+        deltaSeconds: deltaTimeMs / 1000,
+        hijackableVehicles,
+        runtime: chaosRuntime,
+        trafficVehicles: trafficSystem?.getVehicles() ?? []
+      });
 
       if (pedestrianEvents.length > 0) {
         recentPedestrianEvents = pedestrianEvents.slice(-4);
+      }
+
+      if (chaosEvents.length > 0) {
+        recentChaosEvents = [...recentChaosEvents, ...chaosEvents].slice(-4);
       }
     };
 
@@ -683,6 +717,13 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         events: recentPedestrianEvents,
         pedestrianSystem,
         scene
+      });
+      applyChaosSceneTelemetry({
+        canvas,
+        events: recentChaosEvents,
+        runtime: chaosRuntime,
+        scene,
+        vehicles: [vehicleManager.getActiveVehicle(), ...hijackableVehicles, ...trafficVehicles]
       });
 
       const nextNavigationSnapshot = createWorldNavigationSnapshot({
@@ -725,6 +766,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       controller.dispose();
       possessionRuntime.dispose();
       disposeScenePedestrianSystem(pedestrianSystem);
+      disposeSceneChaosRuntime(chaosRuntime);
       trafficSystem?.dispose();
       vehicleManager.dispose();
       hijackableVehicles.forEach((vehicle) => vehicle.dispose());
@@ -787,6 +829,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         controller.dispose();
         possessionRuntime.dispose();
         disposeScenePedestrianSystem(pedestrianSystem);
+        disposeSceneChaosRuntime(chaosRuntime);
         trafficSystem?.dispose();
         vehicleManager.dispose();
         hijackableVehicles.forEach((vehicle) => vehicle.dispose());

@@ -21,6 +21,10 @@ function createTuning(name: string, color: string): VehicleTuning {
     maxForwardSpeed: 18,
     maxReverseSpeed: 7,
     maxTurnRate: 1.8,
+    damage: {
+      durability: name === "Sports Car" ? 60 : 100,
+      impactSpeedThreshold: name === "Sports Car" ? 8 : 7
+    },
     model: {
       bodyStyle: name === "Sports Car" ? "sports-car" : "sedan"
     },

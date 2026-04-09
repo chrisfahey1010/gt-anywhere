@@ -1,5 +1,6 @@
 import { Quaternion, Vector3 } from "@babylonjs/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createVehicleDamageState } from "../../src/vehicles/damage/vehicle-damage-policy";
 import type { StarterVehicleRuntime } from "../../src/vehicles/physics/create-starter-vehicle";
 import type { VehicleTuning } from "../../src/vehicles/physics/vehicle-factory";
 import {
@@ -22,6 +23,10 @@ function createTuning(name: string, color: string): VehicleTuning {
     maxForwardSpeed: 18,
     maxReverseSpeed: 7,
     maxTurnRate: 1.8,
+    damage: {
+      durability: name === "Heavy Truck" ? 180 : name === "Sports Car" ? 60 : 100,
+      impactSpeedThreshold: name === "Heavy Truck" ? 10 : 7
+    },
     model: {
       bodyStyle: name === "Heavy Truck" ? "heavy-truck" : name === "Sports Car" ? "sports-car" : "sedan"
     },
@@ -75,6 +80,10 @@ describe("vehicle manager", () => {
   it("switches to a new vehicle type and preserves transform and velocity state", async () => {
     const activeVehicle = createManagedVehicleRuntime({
       vehicleType: "sedan",
+      damageState: createVehicleDamageState({
+        accumulatedDamage: 25,
+        tuning: sedanTuning
+      }),
       tuning: sedanTuning,
       runtime: createRuntime({
         position: new Vector3(12, 4.5, -8),
@@ -128,6 +137,8 @@ describe("vehicle manager", () => {
     expect(targetRotation.equalsWithEpsilon(Quaternion.FromEulerVector(new Vector3(0, Math.PI / 3, 0)))).toBe(true);
     expect(nextVehicleRuntime.physicsAggregate.body.setLinearVelocity).toHaveBeenCalledTimes(1);
     expect(nextVehicleRuntime.physicsAggregate.body.setAngularVelocity).toHaveBeenCalledTimes(1);
+    expect(switchedVehicle.damageState.normalizedSeverity).toBeCloseTo(0.25);
+    expect(switchedVehicle.damageState.accumulatedDamage).toBeCloseTo(15);
     expect(switchedEvents).toEqual(["sedan->sports-car"]);
   });
 
@@ -168,11 +179,19 @@ describe("vehicle manager", () => {
   it("can transfer the active vehicle without disposing the abandoned runtime", () => {
     const starterVehicle = createManagedVehicleRuntime({
       vehicleType: "sedan",
+      damageState: createVehicleDamageState({
+        accumulatedDamage: 22,
+        tuning: sedanTuning
+      }),
       tuning: sedanTuning,
       runtime: createRuntime()
     });
     const hijackedVehicle = createManagedVehicleRuntime({
       vehicleType: "sports-car",
+      damageState: createVehicleDamageState({
+        accumulatedDamage: 18,
+        tuning: sportsCarTuning
+      }),
       tuning: sportsCarTuning,
       runtime: createRuntime()
     });
@@ -193,6 +212,8 @@ describe("vehicle manager", () => {
 
     expect(manager.setActiveVehicle(hijackedVehicle)).toBe(hijackedVehicle);
     expect(manager.getActiveVehicle()).toBe(hijackedVehicle);
+    expect(manager.getActiveVehicle().damageState).toEqual(hijackedVehicle.damageState);
+    expect(starterVehicle.damageState.accumulatedDamage).toBeCloseTo(22);
     expect(starterVehicle.dispose).not.toHaveBeenCalled();
   });
 });
