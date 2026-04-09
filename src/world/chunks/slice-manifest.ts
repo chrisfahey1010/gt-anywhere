@@ -78,6 +78,23 @@ export interface SliceTrafficPlan {
   vehicles: TrafficVehiclePlan[];
 }
 
+export type PedestrianInitialState = "standing" | "walking" | "waiting";
+
+export interface PedestrianPlanEntry {
+  id: string;
+  chunkId: string;
+  roadId: string;
+  position: SliceVector3;
+  headingDegrees: number;
+  startDistance: number;
+  offsetFromRoad: number;
+  initialState: PedestrianInitialState;
+}
+
+export interface SlicePedestrianPlan {
+  pedestrians: PedestrianPlanEntry[];
+}
+
 export interface SliceManifest {
   sliceId: string;
   generationVersion: string;
@@ -93,4 +110,5 @@ export interface SliceManifest {
   spawnCandidates: SpawnCandidate[];
   sceneMetadata: SliceSceneMetadata;
   traffic?: SliceTrafficPlan;
+  pedestrians?: SlicePedestrianPlan;
 }

@@ -2,10 +2,12 @@ import type {
   SliceBounds,
   SliceChunk,
   SliceManifest,
+  SlicePedestrianPlan,
   SliceRoad,
   SliceTrafficPlan,
   SpawnCandidate
 } from "../chunks/slice-manifest";
+import { createPedestrianPlan } from "../../pedestrians/planning/pedestrian-plan";
 import { createTrafficPlan } from "../../traffic/planning/traffic-plan";
 import type { SessionLocationIdentity, WorldGenerationRequest } from "./location-resolver";
 import { InMemorySliceManifestStore, type SliceManifestStore } from "./slice-manifest-store";
@@ -285,6 +287,7 @@ function createSliceManifest(
   roads: SliceRoad[],
   spawnCandidates: SpawnCandidate[],
   traffic: SliceTrafficPlan,
+  pedestrians: SlicePedestrianPlan,
   generationVersion: string
 ): SliceManifest {
   return {
@@ -301,6 +304,7 @@ function createSliceManifest(
     roads,
     spawnCandidates,
     traffic,
+    pedestrians,
     sceneMetadata: {
       displayName: preset.displayName,
       districtName: preset.districtName,
@@ -380,6 +384,13 @@ export class DefaultWorldSliceGenerator implements WorldSliceGenerator {
       const spawnCandidates = runSpawnPlanner(chunks, roads);
       const primarySpawnCandidate = spawnCandidates[0] ?? createFallbackSpawnCandidate(chunks, roads);
       const traffic = createTrafficPlan({ bounds, chunks, roads, spawnCandidate: primarySpawnCandidate });
+      const pedestrians = createPedestrianPlan({
+        bounds,
+        chunks,
+        roads,
+        spawnCandidate: primarySpawnCandidate,
+        traffic
+      });
       const manifest = createSliceManifest(
         request,
         preset,
@@ -388,6 +399,7 @@ export class DefaultWorldSliceGenerator implements WorldSliceGenerator {
         roads,
         spawnCandidates,
         traffic,
+        pedestrians,
         this.generationVersion
       );
 

@@ -49,6 +49,12 @@ import {
 } from "./world-scene-runtime";
 import { createTrafficSystem, type TrafficSystem } from "../../traffic/runtime/traffic-system";
 import {
+  applyPedestrianSceneTelemetry,
+  createScenePedestrianSystem,
+  disposeScenePedestrianSystem,
+  updateScenePedestrians
+} from "./pedestrian-scene-runtime";
+import {
   REPLAY_VEHICLE_TYPES,
   type ReplaySelection,
   type ReplayStarterVehicleType
@@ -481,7 +487,24 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       );
     }
 
+    let pedestrianSystem = null;
+
+    try {
+      pedestrianSystem = createScenePedestrianSystem({
+        manifest,
+        parent: worldRoot,
+        scene
+      });
+    } catch (error) {
+      controller.dispose();
+      trafficSystem?.dispose();
+      hijackableVehicles.forEach((vehicle) => vehicle.dispose());
+      vehicleManager.dispose();
+      throw error;
+    }
+
     let currentInputFrame: PlayerInputFrame = controller.captureInputFrame();
+    let recentPedestrianEvents: ReturnType<typeof updateScenePedestrians> = [];
     const possessionRuntime: PlayerPossessionRuntime = createPlayerPossessionRuntime({
       blockingMeshes: exitBlockingMeshes,
       getInteractableVehicles: () => hijackableVehicles.filter((vehicle) => isVehicleHijackInteractionAllowed(vehicle)),
@@ -622,6 +645,16 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       }
 
       trafficSystem?.update(deltaTimeMs / 1000);
+      const pedestrianEvents = updateScenePedestrians({
+        activeVehicle: vehicleManager.getActiveVehicle(),
+        deltaSeconds: deltaTimeMs / 1000,
+        onFootActor: possessionRuntime.getOnFootRuntime(),
+        pedestrianSystem
+      });
+
+      if (pedestrianEvents.length > 0) {
+        recentPedestrianEvents = pedestrianEvents.slice(-4);
+      }
     };
 
     const syncCanvasTelemetry = (): void => {
@@ -645,6 +678,12 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       }
 
       canvas.dataset.trafficVehicleCount = String(trafficVehicles.length);
+      applyPedestrianSceneTelemetry({
+        canvas,
+        events: recentPedestrianEvents,
+        pedestrianSystem,
+        scene
+      });
 
       const nextNavigationSnapshot = createWorldNavigationSnapshot({
         activeVehicle: vehicleManager.getActiveVehicle(),
@@ -685,6 +724,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     } catch (error) {
       controller.dispose();
       possessionRuntime.dispose();
+      disposeScenePedestrianSystem(pedestrianSystem);
       trafficSystem?.dispose();
       vehicleManager.dispose();
       hijackableVehicles.forEach((vehicle) => vehicle.dispose());
@@ -746,6 +786,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         removeVehicleSwitchListener();
         controller.dispose();
         possessionRuntime.dispose();
+        disposeScenePedestrianSystem(pedestrianSystem);
         trafficSystem?.dispose();
         vehicleManager.dispose();
         hijackableVehicles.forEach((vehicle) => vehicle.dispose());

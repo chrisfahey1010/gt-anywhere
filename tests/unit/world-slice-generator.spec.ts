@@ -377,4 +377,94 @@ describe("world slice generator", () => {
       });
     });
   });
+
+  it("adds a deterministic serializable pedestrian plan derived from slice roads and chunk bounds", async () => {
+    const generator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: createPresetSource(),
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const request = await createRequest(validLocationAliasQuery);
+    const firstResult = await generator.generate(request);
+    const secondResult = await generator.generate(request);
+
+    expect(firstResult.ok).toBe(true);
+    expect(secondResult.ok).toBe(true);
+
+    if (!firstResult.ok || !secondResult.ok) {
+      return;
+    }
+
+    expect(JSON.parse(JSON.stringify(firstResult.manifest.pedestrians))).toMatchObject({
+      pedestrians: expect.arrayContaining([
+        expect.objectContaining({
+          chunkId: expect.any(String),
+          headingDegrees: expect.any(Number),
+          id: expect.any(String),
+          initialState: expect.stringMatching(/standing|walking|waiting/),
+          offsetFromRoad: expect.any(Number),
+          position: {
+            x: expect.any(Number),
+            y: expect.any(Number),
+            z: expect.any(Number)
+          },
+          roadId: expect.any(String),
+          startDistance: expect.any(Number)
+        })
+      ])
+    });
+    expect(firstResult.manifest.pedestrians?.pedestrians.length ?? 0).toBeGreaterThan(0);
+    expect(firstResult.manifest.pedestrians).toEqual(secondResult.manifest.pedestrians);
+  });
+
+  it("keeps generated pedestrians clear of the starter spawn, slice edges, traffic starts, and hijackable vehicle placements", async () => {
+    const generator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: createPresetSource(),
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const request = await createRequest(validLocationAliasQuery);
+    const result = await generator.generate(request);
+
+    expect(result.ok).toBe(true);
+
+    if (!result.ok) {
+      return;
+    }
+
+    const pedestrians = result.manifest.pedestrians?.pedestrians ?? [];
+    const trafficVehicles = result.manifest.traffic?.vehicles ?? [];
+    const hijackableSpawns = createHijackableVehicleSpawns(result.manifest, result.spawnCandidate);
+
+    expect(pedestrians.length).toBeGreaterThan(0);
+
+    pedestrians.forEach((pedestrian) => {
+      const starterDistance = Math.hypot(
+        pedestrian.position.x - result.spawnCandidate.position.x,
+        pedestrian.position.z - result.spawnCandidate.position.z
+      );
+
+      expect(pedestrian.position.x).toBeGreaterThan(result.manifest.bounds.minX + 12);
+      expect(pedestrian.position.x).toBeLessThan(result.manifest.bounds.maxX - 12);
+      expect(pedestrian.position.z).toBeGreaterThan(result.manifest.bounds.minZ + 12);
+      expect(pedestrian.position.z).toBeLessThan(result.manifest.bounds.maxZ - 12);
+      expect(starterDistance).toBeGreaterThanOrEqual(30);
+
+      trafficVehicles.forEach((trafficVehicle) => {
+        const trafficDistance = Math.hypot(
+          pedestrian.position.x - trafficVehicle.position.x,
+          pedestrian.position.z - trafficVehicle.position.z
+        );
+
+        expect(trafficDistance).toBeGreaterThanOrEqual(14);
+      });
+
+      hijackableSpawns.forEach((secondarySpawn) => {
+        const secondaryDistance = Math.hypot(
+          pedestrian.position.x - secondarySpawn.position.x,
+          pedestrian.position.z - secondarySpawn.position.z
+        );
+
+        expect(secondaryDistance).toBeGreaterThanOrEqual(14);
+      });
+    });
+  });
 });

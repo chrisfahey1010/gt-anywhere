@@ -1,5 +1,5 @@
 # generated: 2026-04-06T22:37:53-07:00
-# last_updated: 2026-04-08T13:32:58-07:00
+# last_updated: 2026-04-08T21:57:21-07:00
 # project: gt-anywhere
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: "2026-04-06T22:37:53-07:00"
-last_updated: "2026-04-08T13:32:58-07:00"
+last_updated: "2026-04-08T21:57:21-07:00"
 project: gt-anywhere
 project_key: NOKEY
 tracking_system: file-system
@@ -58,7 +58,7 @@ development_status:
   epic-2-retrospective: optional
   epic-3: in-progress
   3-1-drive-through-traffic: done
-  3-2-encounter-pedestrians: backlog
+  3-2-encounter-pedestrians: review
   3-3-damage-vehicles-and-break-selected-props: backlog
   3-4-use-limited-combat-options: backlog
   3-5-accumulate-danger-through-chaotic-play: backlog
