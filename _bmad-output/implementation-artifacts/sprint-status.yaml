@@ -59,8 +59,8 @@ development_status:
   epic-3: in-progress
   3-1-drive-through-traffic: done
   3-2-encounter-pedestrians: done
-  3-3-damage-vehicles-and-break-selected-props: review
-  3-4-use-limited-combat-options: "done"
+  3-3-damage-vehicles-and-break-selected-props: done
+  3-4-use-limited-combat-options: done
   3-5-accumulate-danger-through-chaotic-play: backlog
   3-6-escape-fail-and-restart-the-run: backlog
   epic-3-retrospective: optional
