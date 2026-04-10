@@ -46,8 +46,8 @@ export class WorldSceneRuntimeError extends Error {
   readonly failureDetails: Record<string, unknown>;
 
   constructor(
-    failureCode: Extract<WorldLoadFailureCode, "STARTER_VEHICLE_SPAWN_FAILED" | "STARTER_VEHICLE_POSSESSION_FAILED">,
-    failureStage: Extract<WorldLoadFailureStage, "vehicle-spawning" | "vehicle-possession">,
+    failureCode: WorldLoadFailureCode,
+    failureStage: WorldLoadFailureStage,
     message: string,
     failureDetails: Record<string, unknown> = {}
   ) {
@@ -60,8 +60,8 @@ export class WorldSceneRuntimeError extends Error {
 }
 
 export function createWorldSceneRuntimeError(
-  failureCode: Extract<WorldLoadFailureCode, "STARTER_VEHICLE_SPAWN_FAILED" | "STARTER_VEHICLE_POSSESSION_FAILED">,
-  failureStage: Extract<WorldLoadFailureStage, "vehicle-spawning" | "vehicle-possession">,
+  failureCode: WorldLoadFailureCode,
+  failureStage: WorldLoadFailureStage,
   message: string,
   failureDetails: Record<string, unknown> = {}
 ): WorldSceneRuntimeError {

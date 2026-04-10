@@ -142,6 +142,50 @@ describe("app bootstrap smoke", () => {
     expect(readyCount).toBe(2);
   });
 
+  it("lets the player hide and restore the session setup overlay with H during world-ready", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => ({
+        ok: true,
+        manifest,
+        spawnCandidate: manifest.spawnCandidates[0]
+      })
+    };
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost }) => {
+        renderHost.innerHTML = '<div data-testid="world-ready-scene">Fake world scene</div>';
+
+        return {
+          canvas: document.createElement("canvas"),
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+
+    const app = await createGameApp({ host, sliceGenerator, sceneLoader });
+    const input = host.querySelector("input") as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await app.whenIdle();
+
+    const shellHost = host.querySelector(".world-shell-host") as HTMLDivElement;
+
+    expect(app.getSnapshot().phase).toBe("world-ready");
+    expect(shellHost.hidden).toBe(false);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, code: "KeyH" }));
+    expect(shellHost.hidden).toBe(true);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, code: "KeyH" }));
+    expect(shellHost.hidden).toBe(false);
+  });
+
   it("keeps the controllable-vehicle baseline and possession indicator coherent across restart", async () => {
     document.body.innerHTML = '<div id="app"></div>';
 

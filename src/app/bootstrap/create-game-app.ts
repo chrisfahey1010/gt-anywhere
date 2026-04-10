@@ -9,6 +9,7 @@ import {
 import { LocationEntryScreen } from "../../ui/shell/location-entry-screen";
 import { WorldNavigationHud } from "../../ui/hud/world-navigation-hud";
 import { WorldCombatHud } from "../../ui/hud/world-combat-hud";
+import { WorldHeatHud } from "../../ui/hud/world-heat-hud";
 import {
   createWorldGenerationRequest,
   LocationResolver,
@@ -126,6 +127,8 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   });
   const navigationHud = new WorldNavigationHud({ host: hudHost });
   const combatHud = new WorldCombatHud({ host: hudHost });
+  let heatHud: WorldHeatHud | null = null;
+  let shellHiddenInWorldReady = false;
 
   let state = createInitialSessionState();
   let pendingWork = Promise.resolve();
@@ -135,13 +138,32 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   let sceneLoaderPromise: Promise<WorldSceneLoader> | null = null;
   let removeNavigationSubscription = (): void => {};
   let removeCombatSubscription = (): void => {};
+  let removeHeatSubscription = (): void => {};
 
   const render = (): void => {
     screen.render(state);
+    shellHost.hidden = state.phase === "world-ready" && shellHiddenInWorldReady;
     renderHost.dataset.phase = state.phase;
     navigationHud.setVisible(state.phase === "world-ready");
     combatHud.setVisible(state.phase === "world-ready");
+    heatHud?.setVisible(state.phase === "world-ready");
   };
+
+  const handleShellVisibilityShortcut = (event: KeyboardEvent): void => {
+    if (event.code !== "KeyH" || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat) {
+      return;
+    }
+
+    if (state.phase !== "world-ready") {
+      return;
+    }
+
+    event.preventDefault();
+    shellHiddenInWorldReady = !shellHiddenInWorldReady;
+    render();
+  };
+
+  window.addEventListener("keydown", handleShellVisibilityShortcut);
 
   const settlePendingWork = (work: Promise<unknown>): void => {
     pendingWork = work.then(
@@ -153,9 +175,12 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   const disposeWorldScene = (): void => {
     removeNavigationSubscription();
     removeCombatSubscription();
+    removeHeatSubscription();
     removeNavigationSubscription = (): void => {};
     removeCombatSubscription = (): void => {};
+    removeHeatSubscription = (): void => {};
     navigationHud.clear();
+    heatHud?.clear();
     worldScene?.dispose();
     worldScene = null;
     renderHost.innerHTML = "";
@@ -265,6 +290,13 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
           combatHud.updateWeapon(options.activeWeaponId as any);
           combatHud.processEvents(options.events);
         }) ?? (() => {});
+      if (worldScene.subscribeHeat) {
+        heatHud ??= new WorldHeatHud({ host: hudHost });
+        removeHeatSubscription =
+          worldScene.subscribeHeat((options) => {
+            heatHud?.render(options.snapshot);
+          }) ?? (() => {});
+      }
       const initialNavigationSnapshot = worldScene.getNavigationSnapshot?.();
 
       if (initialNavigationSnapshot !== undefined) {
@@ -527,6 +559,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
       whenIdle: () => pendingWork,
       destroy: () => {
         activeLoadId += 1;
+        window.removeEventListener("keydown", handleShellVisibilityShortcut);
         disposeWorldScene();
         options.host.innerHTML = "";
       }
