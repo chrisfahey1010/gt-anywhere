@@ -6,7 +6,7 @@ import {
   type VehicleDamageState
 } from "./vehicle-damage-policy";
 
-export type VehicleImpactSourceType = "prop" | "vehicle";
+export type VehicleImpactSourceType = "combat" | "prop" | "vehicle";
 
 export type VehicleDamageSeverity = "minor" | "moderate" | "heavy";
 

@@ -50,6 +50,11 @@ describe("world scene runtime helpers", () => {
 
   it("blocks exit interaction while a vehicle switch handoff is in flight", () => {
     const frame = {
+      combatControls: {
+        firePressed: true,
+        weaponCycleDirection: 1,
+        weaponSlotRequested: 1
+      },
       interactionRequested: true,
       onFootMovement: {
         forward: 0,
@@ -65,10 +70,24 @@ describe("world scene runtime helpers", () => {
         lookY: 0,
         lookInputSource: "none" as const
       }
-    };
+    } satisfies Parameters<typeof sanitizeWorldRuntimeInputFrame>[0];
 
     expect(canSwitchControlledVehicle({ possessionMode: "vehicle", vehicleSwitchInFlight: false })).toBe(true);
     expect(canSwitchControlledVehicle({ possessionMode: "on-foot", vehicleSwitchInFlight: false })).toBe(false);
+
+    expect(
+      sanitizeWorldRuntimeInputFrame(frame, {
+        possessionMode: "vehicle",
+        vehicleSwitchInFlight: false
+      })
+    ).toEqual({
+      ...frame,
+      combatControls: {
+        firePressed: false,
+        weaponCycleDirection: 0,
+        weaponSlotRequested: null
+      }
+    });
 
     expect(
       sanitizeWorldRuntimeInputFrame(frame, {
@@ -77,8 +96,20 @@ describe("world scene runtime helpers", () => {
       })
     ).toEqual({
       ...frame,
+      combatControls: {
+        firePressed: false,
+        weaponCycleDirection: 0,
+        weaponSlotRequested: null
+      },
       interactionRequested: false
     });
+
+    expect(
+      sanitizeWorldRuntimeInputFrame(frame, {
+        possessionMode: "on-foot",
+        vehicleSwitchInFlight: false
+      })
+    ).toEqual(frame);
   });
 
   it("publishes a typed navigation snapshot from the active vehicle while in vehicle mode", () => {

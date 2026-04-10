@@ -2,6 +2,7 @@ import { MeshBuilder, Scene, TransformNode, Vector3 } from "@babylonjs/core";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPlayerPossessionRuntime } from "../../src/sandbox/on-foot/player-possession-runtime";
+import type { PlayerInputFrame } from "../../src/vehicles/controllers/player-vehicle-controller";
 
 describe("player possession runtime", () => {
   let engine: NullEngine;
@@ -64,6 +65,35 @@ describe("player possession runtime", () => {
     };
   }
 
+  function createFrame(overrides: Partial<PlayerInputFrame> = {}): PlayerInputFrame {
+    return {
+      combatControls: {
+        firePressed: false,
+        weaponCycleDirection: 0,
+        weaponSlotRequested: null,
+        ...overrides.combatControls
+      },
+      interactionRequested: false,
+      onFootMovement: {
+        forward: 0,
+        right: 0,
+        ...overrides.onFootMovement
+      },
+      switchVehicleRequested: false,
+      vehicleControls: {
+        throttle: 0,
+        brake: 0,
+        steering: 0,
+        handbrake: false,
+        lookX: 0,
+        lookY: 0,
+        lookInputSource: "none",
+        ...overrides.vehicleControls
+      },
+      ...overrides
+    };
+  }
+
   it("denies exit when the vehicle is above the safe speed threshold", () => {
     const ground = createGround();
     const vehicle = createVehicle("fast-vehicle", new Vector3(0, 1.7, 0), new Vector3(4, 0, 0));
@@ -81,25 +111,10 @@ describe("player possession runtime", () => {
     });
     runtime.bindActiveVehicle(vehicle);
 
-    const update = runtime.update(
-      {
-        interactionRequested: true,
-        onFootMovement: { forward: 0, right: 0 },
-        switchVehicleRequested: false,
-        vehicleControls: {
-          throttle: 0,
-          brake: 0,
-          steering: 0,
-          handbrake: false,
-          lookX: 0,
-          lookY: 0,
-          lookInputSource: "none"
-        }
-      },
-      1 / 60
-    );
+    const update = runtime.update(createFrame({ interactionRequested: true }), 1 / 60);
 
     expect(update.transition).toBe("none");
+    expect(update.combatEnabled).toBe(false);
     expect(runtime.getMode()).toBe("vehicle");
     expect(runtime.getOnFootRuntime()).toBeNull();
     runtime.dispose();
@@ -123,48 +138,18 @@ describe("player possession runtime", () => {
     });
     runtime.bindActiveVehicle(exitedVehicle);
 
-    expect(
-      runtime.update(
-        {
-          interactionRequested: true,
-          onFootMovement: { forward: 0, right: 0 },
-          switchVehicleRequested: false,
-          vehicleControls: {
-            throttle: 0,
-            brake: 0,
-            steering: 0,
-            handbrake: false,
-            lookX: 0,
-            lookY: 0,
-            lookInputSource: "none"
-          }
-        },
-        1 / 60
-      ).transition
-    ).toBe("exited");
+    const exitUpdate = runtime.update(createFrame({ interactionRequested: true }), 1 / 60);
+
+    expect(exitUpdate.transition).toBe("exited");
+    expect(exitUpdate.combatEnabled).toBe(false);
 
     runtime.bindActiveVehicle(otherVehicle);
     runtime.getOnFootRuntime()!.mesh.position.copyFromFloats(6.1, runtime.getOnFootRuntime()!.mesh.position.y, 0);
 
-    const update = runtime.update(
-      {
-        interactionRequested: true,
-        onFootMovement: { forward: 0, right: 0 },
-        switchVehicleRequested: false,
-        vehicleControls: {
-          throttle: 0,
-          brake: 0,
-          steering: 0,
-          handbrake: false,
-          lookX: 0,
-          lookY: 0,
-          lookInputSource: "none"
-        }
-      },
-      1 / 60
-    );
+    const update = runtime.update(createFrame({ interactionRequested: true }), 1 / 60);
 
     expect(update.transition).toBe("none");
+    expect(update.combatEnabled).toBe(true);
     expect(runtime.getMode()).toBe("on-foot");
     expect(runtime.getStoredVehicle()).toBe(exitedVehicle);
     runtime.dispose();
@@ -189,47 +174,14 @@ describe("player possession runtime", () => {
     });
     runtime.bindActiveVehicle(storedVehicle);
 
-    expect(
-      runtime.update(
-        {
-          interactionRequested: true,
-          onFootMovement: { forward: 0, right: 0 },
-          switchVehicleRequested: false,
-          vehicleControls: {
-            throttle: 0,
-            brake: 0,
-            steering: 0,
-            handbrake: false,
-            lookX: 0,
-            lookY: 0,
-            lookInputSource: "none"
-          }
-        },
-        1 / 60
-      ).transition
-    ).toBe("exited");
+    expect(runtime.update(createFrame({ interactionRequested: true }), 1 / 60).transition).toBe("exited");
 
     runtime.getOnFootRuntime()?.mesh.position.copyFromFloats(0, runtime.getOnFootRuntime()!.mesh.position.y, -1.6);
 
-    const update = runtime.update(
-      {
-        interactionRequested: true,
-        onFootMovement: { forward: 0, right: 0 },
-        switchVehicleRequested: false,
-        vehicleControls: {
-          throttle: 0,
-          brake: 0,
-          steering: 0,
-          handbrake: false,
-          lookX: 0,
-          lookY: 0,
-          lookInputSource: "none"
-        }
-      },
-      1 / 60
-    );
+    const update = runtime.update(createFrame({ interactionRequested: true }), 1 / 60);
 
     expect(update.transition).toBe("reentered");
+    expect(update.combatEnabled).toBe(false);
     expect(runtime.getMode()).toBe("vehicle");
     expect(runtime.getStoredVehicle()).toBeNull();
     runtime.dispose();
@@ -255,93 +207,64 @@ describe("player possession runtime", () => {
     });
     runtime.bindActiveVehicle(storedVehicle);
 
-    expect(
-      runtime.update(
-        {
-          interactionRequested: true,
-          onFootMovement: { forward: 0, right: 0 },
-          switchVehicleRequested: false,
-          vehicleControls: {
-            throttle: 0,
-            brake: 0,
-            steering: 0,
-            handbrake: false,
-            lookX: 0,
-            lookY: 0,
-            lookInputSource: "none"
-          }
-        },
-        1 / 60
-      ).transition
-    ).toBe("exited");
+    expect(runtime.update(createFrame({ interactionRequested: true }), 1 / 60).transition).toBe("exited");
 
     runtime.getOnFootRuntime()?.mesh.position.copyFromFloats(0.8, runtime.getOnFootRuntime()!.mesh.position.y, 1.4);
 
-    const startedHijack = runtime.update(
-      {
-        interactionRequested: true,
-        onFootMovement: { forward: 0, right: 0 },
-        switchVehicleRequested: false,
-        vehicleControls: {
-          throttle: 0,
-          brake: 0,
-          steering: 0,
-          handbrake: false,
-          lookX: 0,
-          lookY: 0,
-          lookInputSource: "none"
-        }
-      },
-      1 / 60
-    );
+    const startedHijack = runtime.update(createFrame({ interactionRequested: true }), 1 / 60);
 
     expect(startedHijack.transition).toBe("hijack-started");
+    expect(startedHijack.combatEnabled).toBe(false);
     expect(runtime.getMode()).toBe("on-foot");
     expect(runtime.getStoredVehicle()).toBe(storedVehicle);
 
-    expect(
-      runtime.update(
-        {
-          interactionRequested: true,
-          onFootMovement: { forward: 0, right: 0 },
-          switchVehicleRequested: false,
-          vehicleControls: {
-            throttle: 0,
-            brake: 0,
-            steering: 0,
-            handbrake: false,
-            lookX: 0,
-            lookY: 0,
-            lookInputSource: "none"
-          }
-        },
-        0.2
-      ).transition
-    ).toBe("none");
+    const hijackInFlight = runtime.update(createFrame({ interactionRequested: true }), 0.2);
 
-    const completedHijack = runtime.update(
-      {
-        interactionRequested: false,
-        onFootMovement: { forward: 0, right: 0 },
-        switchVehicleRequested: false,
-        vehicleControls: {
-          throttle: 0,
-          brake: 0,
-          steering: 0,
-          handbrake: false,
-          lookX: 0,
-          lookY: 0,
-          lookInputSource: "none"
-        }
-      },
-      0.31
-    );
+    expect(hijackInFlight.transition).toBe("none");
+    expect(hijackInFlight.combatEnabled).toBe(false);
+
+    const completedHijack = runtime.update(createFrame(), 0.31);
 
     expect(completedHijack.transition).toBe("hijacked");
+    expect(completedHijack.combatEnabled).toBe(false);
     expect(completedHijack.targetVehicle).toBe(hijackableVehicle);
     expect(runtime.getMode()).toBe("vehicle");
     expect(runtime.getOnFootRuntime()).toBeNull();
     expect(runtime.getStoredVehicle()).toBeNull();
+    runtime.dispose();
+  });
+
+  it("only enables combat after the exit frame has completed", () => {
+    const ground = createGround();
+    const vehicle = createVehicle("starter-vehicle", new Vector3(0, 1.7, 0), Vector3.Zero());
+    const runtime = createPlayerPossessionRuntime({
+      blockingMeshes: [],
+      parent: root,
+      scene,
+      sliceBounds: {
+        minX: -20,
+        maxX: 20,
+        minZ: -20,
+        maxZ: 20
+      },
+      surfaceMeshes: [ground]
+    });
+    runtime.bindActiveVehicle(vehicle);
+
+    const exitUpdate = runtime.update(createFrame({ interactionRequested: true }), 1 / 60);
+    const onFootUpdate = runtime.update(
+      createFrame({
+        onFootMovement: {
+          forward: 1,
+          right: 0
+        }
+      }),
+      1 / 60
+    );
+
+    expect(exitUpdate.combatEnabled).toBe(false);
+    expect(onFootUpdate.transition).toBe("none");
+    expect(onFootUpdate.combatEnabled).toBe(true);
     runtime.dispose();
   });
 });

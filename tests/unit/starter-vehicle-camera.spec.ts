@@ -7,6 +7,11 @@ function createMockController(overrides: Partial<ReturnType<PlayerVehicleControl
   return {
     bindVehicle: () => {},
     captureInputFrame: () => ({
+      combatControls: {
+        firePressed: false,
+        weaponCycleDirection: 0,
+        weaponSlotRequested: null
+      },
       interactionRequested: false,
       onFootMovement: {
         forward: 0,

@@ -375,3 +375,55 @@ h1 {
     width: 100%;
   }
 }
+
+/* Combat UI */
+.world-combat-hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.world-combat-hud__crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+  transition: transform 0.05s ease-out, background-color 0.05s ease-out;
+}
+
+.world-combat-hud__crosshair--hit {
+  background: #ef4444;
+  transform: translate(-50%, -50%) scale(1.8);
+}
+
+.world-combat-hud__weapon {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  color: #f8fafc;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  background: linear-gradient(180deg, rgba(9, 13, 20, 0.82) 0%, rgba(9, 13, 20, 0.72) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  padding: 10px 16px;
+  border-radius: 12px;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(10px);
+}
+
+.world-combat-hud__flash {
+  position: absolute;
+  inset: 0;
+  box-shadow: inset 0 0 0 0 transparent;
+}
+
+.world-combat-hud__flash--active {
+  box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.15);
+  transition: box-shadow 0.05s ease-out;
+}

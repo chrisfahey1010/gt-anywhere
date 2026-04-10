@@ -177,13 +177,19 @@ export function sanitizeWorldRuntimeInputFrame(
   frame: PlayerInputFrame,
   state: WorldSceneRuntimeState
 ): PlayerInputFrame {
-  if (canSwitchControlledVehicle(state) || state.possessionMode === "on-foot") {
+  if (state.possessionMode === "on-foot" && state.vehicleSwitchInFlight === false) {
     return frame;
   }
 
   return {
     ...frame,
-    interactionRequested: false
+    combatControls: {
+      ...frame.combatControls,
+      firePressed: false,
+      weaponCycleDirection: 0,
+      weaponSlotRequested: null
+    },
+    interactionRequested: state.vehicleSwitchInFlight ? false : frame.interactionRequested
   };
 }
 

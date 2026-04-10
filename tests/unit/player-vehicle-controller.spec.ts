@@ -12,7 +12,7 @@ function createButton(value: number): GamepadButton {
 }
 
 function createGamepadState(overrides: Partial<VehicleGamepadState> = {}): VehicleGamepadState {
-  const buttons = Array.from({ length: 8 }, () => createButton(0));
+  const buttons = Array.from({ length: 16 }, () => createButton(0));
 
   buttons[0] = createButton(1);
   buttons[6] = createButton(0.35);
@@ -46,6 +46,11 @@ describe("player vehicle controller", () => {
     const frame = controller.captureInputFrame();
 
     expect(frame).toEqual({
+      combatControls: {
+        firePressed: false,
+        weaponCycleDirection: 0,
+        weaponSlotRequested: null
+      },
       interactionRequested: true,
       onFootMovement: {
         forward: 1,
@@ -64,6 +69,11 @@ describe("player vehicle controller", () => {
     });
 
     expect(controller.captureInputFrame()).toEqual({
+      combatControls: {
+        firePressed: false,
+        weaponCycleDirection: 0,
+        weaponSlotRequested: null
+      },
       interactionRequested: false,
       onFootMovement: {
         forward: 1,
@@ -95,6 +105,11 @@ describe("player vehicle controller", () => {
     window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE" }));
 
     expect(controller.captureInputFrame()).toEqual({
+      combatControls: {
+        firePressed: false,
+        weaponCycleDirection: 0,
+        weaponSlotRequested: null
+      },
       interactionRequested: true,
       onFootMovement: {
         forward: 1,
@@ -115,6 +130,66 @@ describe("player vehicle controller", () => {
     window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyW" }));
     window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyA" }));
     window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyE" }));
+    controller.dispose();
+  });
+
+  it("captures explicit combat inputs without disturbing interaction or vehicle switching", () => {
+    const controller = createPlayerVehicleController({ eventTarget: window });
+
+    controller.bindVehicle({});
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE" }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Tab" }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Digit2" }));
+    window.dispatchEvent(new MouseEvent("mousedown", { button: 0 }));
+
+    expect(controller.captureInputFrame()).toEqual({
+      combatControls: {
+        firePressed: true,
+        weaponCycleDirection: 0,
+        weaponSlotRequested: 1
+      },
+      interactionRequested: true,
+      onFootMovement: {
+        forward: 0,
+        right: 0
+      },
+      switchVehicleRequested: true,
+      vehicleControls: {
+        throttle: 0,
+        brake: 0,
+        steering: 0,
+        handbrake: false,
+        lookX: 0,
+        lookY: 0,
+        lookInputSource: "none"
+      }
+    });
+
+    window.dispatchEvent(new MouseEvent("mouseup", { button: 0 }));
+
+    expect(controller.captureInputFrame()).toEqual({
+      combatControls: {
+        firePressed: false,
+        weaponCycleDirection: 0,
+        weaponSlotRequested: null
+      },
+      interactionRequested: false,
+      onFootMovement: {
+        forward: 0,
+        right: 0
+      },
+      switchVehicleRequested: false,
+      vehicleControls: {
+        throttle: 0,
+        brake: 0,
+        steering: 0,
+        handbrake: false,
+        lookX: 0,
+        lookY: 0,
+        lookInputSource: "none"
+      }
+    });
+
     controller.dispose();
   });
 
@@ -197,6 +272,46 @@ describe("player vehicle controller", () => {
     });
 
     window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyW" }));
+    controller.dispose();
+  });
+
+  it("captures gamepad combat fire and one-shot weapon cycling", () => {
+    const buttons = Array.from({ length: 16 }, () => createButton(0));
+    buttons[7] = createButton(0.75);
+    buttons[15] = createButton(1);
+
+    const controller = createPlayerVehicleController({
+      eventTarget: window,
+      gamepadProvider: () => [createGamepadState({ buttons })]
+    });
+
+    expect(controller.captureInputFrame().combatControls).toEqual({
+      firePressed: true,
+      weaponCycleDirection: 1,
+      weaponSlotRequested: null
+    });
+
+    expect(controller.captureInputFrame().combatControls).toEqual({
+      firePressed: true,
+      weaponCycleDirection: 0,
+      weaponSlotRequested: null
+    });
+
+    controller.dispose();
+  });
+
+  it("captures mouse-wheel combat cycling as a one-shot request", () => {
+    const controller = createPlayerVehicleController({ eventTarget: window });
+
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: -120 }));
+
+    expect(controller.captureInputFrame().combatControls).toEqual({
+      firePressed: false,
+      weaponCycleDirection: -1,
+      weaponSlotRequested: null
+    });
+    expect(controller.captureInputFrame().combatControls.weaponCycleDirection).toBe(0);
+
     controller.dispose();
   });
 

@@ -4,13 +4,18 @@ import type { SlicePedestrianPlan } from "../../world/chunks/slice-manifest";
 
 export interface PedestrianThreat {
   id: string;
-  kind: "player" | "vehicle";
+  kind: "gunfire" | "player" | "vehicle";
   position: {
     x: number;
     y: number;
     z: number;
   };
   radius: number;
+}
+
+export interface PedestrianCombatHit {
+  pedestrianId: string;
+  sourceId: string;
 }
 
 export interface PedestrianCollision {
@@ -28,6 +33,7 @@ export interface PedestrianEvent {
 }
 
 export interface PedestrianSystemUpdateOptions {
+  combatHits?: readonly PedestrianCombatHit[];
   collisions?: readonly PedestrianCollision[];
   deltaSeconds: number;
   threats: readonly PedestrianThreat[];
@@ -152,19 +158,20 @@ export function createPedestrianSystem(options: CreatePedestrianSystemOptions): 
       });
     },
     getPedestrians: () => pedestrians,
-    update: ({ collisions = [], deltaSeconds, threats }) => {
+    update: ({ collisions = [], combatHits = [], deltaSeconds, threats }) => {
       const updateEvents: PedestrianEvent[] = [];
 
       pedestrians.forEach((pedestrian) => {
+        const combatHit = combatHits.find((candidate) => candidate.pedestrianId === pedestrian.id);
         const collision = collisions.find((candidate) => candidate.pedestrianId === pedestrian.id);
 
-        if (collision) {
+        if (combatHit || collision) {
           if (pedestrian.currentState !== "struck") {
             pedestrian.setState("struck");
             updateEvents.push({
-              impactSpeed: collision.impactSpeed,
+              impactSpeed: collision?.impactSpeed,
               pedestrianId: pedestrian.id,
-              sourceId: collision.sourceId,
+              sourceId: combatHit?.sourceId ?? collision?.sourceId,
               state: pedestrian.currentState,
               type: "pedestrian.struck"
             });

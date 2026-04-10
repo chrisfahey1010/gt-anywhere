@@ -171,6 +171,8 @@ describe("chaos scene runtime", () => {
     expect(
       updateSceneChaos({
         activeVehicle,
+        combatPropHits: [],
+        combatVehicleHits: [],
         deltaSeconds: 1 / 60,
         hijackableVehicles: [],
         runtime,
@@ -207,6 +209,8 @@ describe("chaos scene runtime", () => {
     const activeVehicle = createVehicle("starter-vehicle", new Vector3(0, 1.7, 0), new Vector3(0, 0, 9));
     const updateEvents = updateSceneChaos({
       activeVehicle,
+      combatPropHits: [],
+      combatVehicleHits: [],
       deltaSeconds: 1 / 60,
       hijackableVehicles: [],
       runtime,
@@ -242,5 +246,71 @@ describe("chaos scene runtime", () => {
     expect((scene.metadata as Record<string, unknown>).readinessMilestone).toBe("controllable-vehicle");
     expect((scene.metadata as Record<string, unknown>).damagedVehicleCount).toBe(1);
     expect((scene.metadata as Record<string, unknown>).brokenPropCount).toBe(1);
+  });
+
+  it("routes explicit combat hits through the existing vehicle damage and prop break seams", () => {
+    const runtime = createSceneChaosRuntime({
+      manifest: {
+        breakableProps: {
+          props: [
+            {
+              chunkId: "chunk-0-0",
+              headingDegrees: 0,
+              id: "market-st-signpost-0-0",
+              position: { x: 0, y: 0, z: 1.4 },
+              propType: "signpost",
+              roadId: "market-st",
+              startDistance: 18
+            }
+          ]
+        }
+      },
+      parent: root,
+      scene
+    });
+
+    if (runtime === null) {
+      throw new Error("Expected chaos runtime");
+    }
+
+    const activeVehicle = createVehicle("starter-vehicle", new Vector3(0, 1.7, 0), Vector3.Zero());
+    const events = updateSceneChaos({
+      activeVehicle,
+      combatPropHits: [
+        {
+          impactSpeed: 9,
+          propId: "market-st-signpost-0-0",
+          sourceId: "combat-shot-1"
+        }
+      ],
+      combatVehicleHits: [
+        {
+          impactSpeed: 9,
+          sourceId: "combat-shot-1",
+          targetVehicleId: "starter-vehicle"
+        }
+      ],
+      deltaSeconds: 1 / 60,
+      hijackableVehicles: [],
+      runtime,
+      trafficVehicles: []
+    });
+
+    expect(events.map((event) => event.type).sort()).toEqual(["prop.broken", "vehicle.damaged"]);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceId: "combat-shot-1",
+          sourceType: "combat",
+          targetVehicleId: "starter-vehicle",
+          type: "vehicle.damaged"
+        }),
+        expect.objectContaining({
+          propId: "market-st-signpost-0-0",
+          sourceId: "combat-shot-1",
+          type: "prop.broken"
+        })
+      ])
+    );
   });
 });

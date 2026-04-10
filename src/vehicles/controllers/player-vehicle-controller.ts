@@ -13,7 +13,14 @@ export interface OnFootMovementState {
   right: number;
 }
 
+export interface CombatInputState {
+  firePressed: boolean;
+  weaponCycleDirection: -1 | 0 | 1;
+  weaponSlotRequested: 0 | 1 | null;
+}
+
 export interface PlayerInputFrame {
+  combatControls: CombatInputState;
   vehicleControls: VehicleControlState;
   onFootMovement: OnFootMovementState;
   switchVehicleRequested: boolean;
@@ -48,6 +55,14 @@ const STEER_RIGHT_KEYS = new Set(["KeyD", "ArrowRight"]);
 const HANDBRAKE_KEYS = new Set(["Space"]);
 const INTERACTION_KEYS = new Set(["KeyE"]);
 const SWITCH_VEHICLE_KEYS = new Set(["Tab"]);
+const WEAPON_SLOT_KEY_TO_INDEX = new Map<string, 0 | 1>([
+  ["Digit1", 0],
+  ["Digit2", 1]
+]);
+const FIRE_MOUSE_BUTTON = 0;
+const GAMEPAD_COMBAT_TRIGGER_BUTTON = 7;
+const GAMEPAD_DPAD_LEFT_BUTTON = 14;
+const GAMEPAD_DPAD_RIGHT_BUTTON = 15;
 const GAMEPAD_STEERING_DEADZONE = 0.15;
 
 function createEmptyState(): VehicleControlState {
@@ -66,6 +81,14 @@ function createEmptyMovementState(): OnFootMovementState {
   return {
     forward: 0,
     right: 0
+  };
+}
+
+function createEmptyCombatInputState(): CombatInputState {
+  return {
+    firePressed: false,
+    weaponCycleDirection: 0,
+    weaponSlotRequested: null
   };
 }
 
@@ -100,6 +123,17 @@ function readAxisFromKeys(activeKeys: Set<string>, negativeKeys: Set<string>, po
   return positive ? 1 : -1;
 }
 
+function readGamepadCycleDirection(buttons: readonly Pick<GamepadButton, "value" | "pressed" | "touched">[]): -1 | 0 | 1 {
+  const cycleLeftPressed = readButtonPressed(buttons, GAMEPAD_DPAD_LEFT_BUTTON);
+  const cycleRightPressed = readButtonPressed(buttons, GAMEPAD_DPAD_RIGHT_BUTTON);
+
+  if (cycleLeftPressed === cycleRightPressed) {
+    return 0;
+  }
+
+  return cycleRightPressed ? 1 : -1;
+}
+
 export function createPlayerVehicleController(
   options: CreatePlayerVehicleControllerOptions = {}
 ): PlayerVehicleController {
@@ -107,7 +141,12 @@ export function createPlayerVehicleController(
   const gamepadProvider = options.gamepadProvider ?? (() => Array.from(navigator.getGamepads?.() ?? []));
   const activeKeys = new Set<string>();
   let boundVehicle: object | null = null;
+  let fireMousePressed = false;
+  let pendingFirePressed = false;
   let interactionRequested = false;
+  let previousGamepadCycleDirection: -1 | 0 | 1 = 0;
+  let pendingWeaponCycleDirection: -1 | 0 | 1 = 0;
+  let pendingWeaponSlotRequested: 0 | 1 | null = null;
   let switchVehicleRequested = false;
 
   let mouseLookX = 0;
@@ -123,6 +162,13 @@ export function createPlayerVehicleController(
 
       if (INTERACTION_KEYS.has(event.code)) {
         interactionRequested = true;
+        return;
+      }
+
+      const weaponSlot = WEAPON_SLOT_KEY_TO_INDEX.get(event.code);
+
+      if (weaponSlot !== undefined) {
+        pendingWeaponSlotRequested = weaponSlot;
         return;
       }
 
@@ -143,9 +189,31 @@ export function createPlayerVehicleController(
     }
   };
 
+  const handleMouseDown = (event: Event): void => {
+    if (event instanceof MouseEvent && event.button === FIRE_MOUSE_BUTTON) {
+      fireMousePressed = true;
+      pendingFirePressed = true;
+    }
+  };
+
+  const handleMouseUp = (event: Event): void => {
+    if (event instanceof MouseEvent && event.button === FIRE_MOUSE_BUTTON) {
+      fireMousePressed = false;
+    }
+  };
+
+  const handleWheel = (event: Event): void => {
+    if (event instanceof WheelEvent && event.deltaY !== 0) {
+      pendingWeaponCycleDirection = event.deltaY > 0 ? 1 : -1;
+    }
+  };
+
   eventTarget.addEventListener("keydown", handleKeyDown);
   eventTarget.addEventListener("keyup", handleKeyUp);
+  eventTarget.addEventListener("mousedown", handleMouseDown);
   eventTarget.addEventListener("mousemove", handleMouseMove);
+  eventTarget.addEventListener("mouseup", handleMouseUp);
+  eventTarget.addEventListener("wheel", handleWheel);
 
   const readVehicleControls = (allowDriving: boolean, includeLook: boolean): VehicleControlState => {
     const keyboardState = createEmptyState();
@@ -241,12 +309,41 @@ export function createPlayerVehicleController(
     };
   };
 
+  const readCombatControls = (): CombatInputState => {
+    const combatControls = createEmptyCombatInputState();
+    const gamepad = gamepadProvider().find((candidate) => candidate?.connected) ?? null;
+
+    combatControls.firePressed = fireMousePressed || pendingFirePressed;
+    combatControls.weaponCycleDirection = pendingWeaponCycleDirection;
+    combatControls.weaponSlotRequested = pendingWeaponSlotRequested;
+
+    if (gamepad !== null) {
+      const gamepadCycleDirection = readGamepadCycleDirection(gamepad.buttons);
+
+      if (gamepadCycleDirection !== 0 && gamepadCycleDirection !== previousGamepadCycleDirection) {
+        combatControls.weaponCycleDirection = gamepadCycleDirection;
+      }
+
+      previousGamepadCycleDirection = gamepadCycleDirection;
+      combatControls.firePressed ||= readButtonValue(gamepad.buttons, GAMEPAD_COMBAT_TRIGGER_BUTTON) > 0;
+    } else {
+      previousGamepadCycleDirection = 0;
+    }
+
+    pendingFirePressed = false;
+    pendingWeaponCycleDirection = 0;
+    pendingWeaponSlotRequested = null;
+
+    return combatControls;
+  };
+
   return {
     bindVehicle: (vehicle: object) => {
       boundVehicle = vehicle;
     },
     captureInputFrame: () => {
       const frame = {
+        combatControls: readCombatControls(),
         interactionRequested,
         onFootMovement: readOnFootMovement(),
         switchVehicleRequested: boundVehicle !== null && switchVehicleRequested,
@@ -269,13 +366,21 @@ export function createPlayerVehicleController(
     dispose: () => {
       activeKeys.clear();
       boundVehicle = null;
+      fireMousePressed = false;
+      pendingFirePressed = false;
       interactionRequested = false;
       mouseLookX = 0;
       mouseLookY = 0;
+      pendingWeaponCycleDirection = 0;
+      pendingWeaponSlotRequested = null;
+      previousGamepadCycleDirection = 0;
       switchVehicleRequested = false;
       eventTarget.removeEventListener("keydown", handleKeyDown);
       eventTarget.removeEventListener("keyup", handleKeyUp);
+      eventTarget.removeEventListener("mousedown", handleMouseDown);
       eventTarget.removeEventListener("mousemove", handleMouseMove);
+      eventTarget.removeEventListener("mouseup", handleMouseUp);
+      eventTarget.removeEventListener("wheel", handleWheel);
     },
     unbindVehicle: () => {
       boundVehicle = null;

@@ -44,6 +44,7 @@ export interface CreatePlayerPossessionRuntimeOptions {
 }
 
 export interface PlayerPossessionRuntimeUpdate {
+  combatEnabled: boolean;
   targetVehicle?: PossessableVehicleRuntime;
   transition: "none" | "exited" | "hijack-started" | "hijacked" | "reentered";
 }
@@ -122,11 +123,11 @@ export function createPlayerPossessionRuntime(options: CreatePlayerPossessionRun
     update: (frame, deltaSeconds) => {
       if (mode === "vehicle") {
         if (frame.interactionRequested === false || activeVehicle === null) {
-          return { transition: "none" };
+          return { combatEnabled: false, transition: "none" };
         }
 
         if (getHorizontalSpeed(activeVehicle) > exitSpeedThreshold) {
-          return { transition: "none" };
+          return { combatEnabled: false, transition: "none" };
         }
 
         const exitPosition = findSafeExitPosition({
@@ -137,7 +138,7 @@ export function createPlayerPossessionRuntime(options: CreatePlayerPossessionRun
         });
 
         if (exitPosition === null) {
-          return { transition: "none" };
+          return { combatEnabled: false, transition: "none" };
         }
 
         const currentVelocity = activeVehicle.physicsAggregate.body.getLinearVelocity();
@@ -158,11 +159,11 @@ export function createPlayerPossessionRuntime(options: CreatePlayerPossessionRun
         });
         mode = "on-foot";
 
-        return { transition: "exited" };
+        return { combatEnabled: false, transition: "exited" };
       }
 
       if (onFootRuntime === null) {
-        return { transition: "none" };
+        return { combatEnabled: false, transition: "none" };
       }
 
       const nextLook = applyLookDelta(frame.vehicleControls, deltaSeconds, facingYaw, lookPitch);
@@ -209,7 +210,7 @@ export function createPlayerPossessionRuntime(options: CreatePlayerPossessionRun
         hijackTimeRemaining = Math.max(0, hijackTimeRemaining - deltaSeconds);
 
         if (hijackTimeRemaining > 0) {
-          return { transition: "none" };
+          return { combatEnabled: false, transition: "none" };
         }
 
         const resolvedHijackTarget = hijackTarget;
@@ -223,6 +224,7 @@ export function createPlayerPossessionRuntime(options: CreatePlayerPossessionRun
         lookPitch = 0;
 
         return {
+          combatEnabled: false,
           targetVehicle: resolvedHijackTarget,
           transition: "hijacked"
         };
@@ -235,7 +237,7 @@ export function createPlayerPossessionRuntime(options: CreatePlayerPossessionRun
         mode = "vehicle";
         lookPitch = 0;
 
-        return { transition: "reentered" };
+        return { combatEnabled: false, transition: "reentered" };
       }
 
       if (interactionTarget !== null) {
@@ -243,12 +245,13 @@ export function createPlayerPossessionRuntime(options: CreatePlayerPossessionRun
         hijackTimeRemaining = hijackDurationSeconds;
 
         return {
+          combatEnabled: false,
           targetVehicle: interactionTarget.vehicle,
           transition: "hijack-started"
         };
       }
 
-      return { transition: "none" };
+      return { combatEnabled: true, transition: "none" };
     },
     dispose: () => {
       onFootRuntime?.dispose();

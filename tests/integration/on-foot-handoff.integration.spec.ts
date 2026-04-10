@@ -21,6 +21,7 @@ describe("on-foot handoff integration", () => {
   });
 
   afterEach(() => {
+    window.dispatchEvent(new MouseEvent("mouseup", { button: 0 }));
     window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyW" }));
     scene.dispose();
     root.dispose();
@@ -113,6 +114,21 @@ describe("on-foot handoff integration", () => {
 
     expect(currentInputFrame.vehicleControls.throttle).toBe(0);
     expect(currentInputFrame.onFootMovement.forward).toBe(1);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Digit1" }));
+    window.dispatchEvent(new MouseEvent("mousedown", { button: 0 }));
+    currentInputFrame = controller.captureInputFrame();
+    const onFootCombatUpdate = possessionRuntime.update(currentInputFrame, 1 / 60);
+
+    expect(currentInputFrame.combatControls).toEqual({
+      firePressed: true,
+      weaponCycleDirection: 0,
+      weaponSlotRequested: 0
+    });
+    expect(onFootCombatUpdate.transition).toBe("none");
+    expect(onFootCombatUpdate.combatEnabled).toBe(true);
+
+    window.dispatchEvent(new MouseEvent("mouseup", { button: 0 }));
 
     possessionRuntime.getOnFootRuntime()!.mesh.position.copyFromFloats(
       0,

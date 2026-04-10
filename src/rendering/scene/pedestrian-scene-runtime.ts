@@ -1,6 +1,7 @@
 import type { Scene, TransformNode } from "@babylonjs/core";
 import {
   createPedestrianSystem,
+  type PedestrianCombatHit,
   type CreatePedestrianSystemOptions,
   type PedestrianCollision,
   type PedestrianEvent,
@@ -41,10 +42,16 @@ export interface CreateScenePedestrianSystemOptions {
 
 export interface UpdateScenePedestriansOptions {
   activeVehicle: ScenePedestrianVehicleActor;
+  combatHits?: readonly ScenePedestrianCombatHit[];
+  combatThreats?: readonly ScenePedestrianCombatThreat[];
   deltaSeconds: number;
   onFootActor?: ScenePedestrianActor | null;
   pedestrianSystem: PedestrianSystem | null;
 }
+
+export interface ScenePedestrianCombatHit extends PedestrianCombatHit {}
+
+export interface ScenePedestrianCombatThreat extends PedestrianThreat {}
 
 export interface ApplyPedestrianSceneTelemetryOptions {
   canvas: HTMLCanvasElement;
@@ -66,6 +73,7 @@ function getVehicleSpeed(actor: ScenePedestrianVehicleActor): number {
 
 function createThreats(options: {
   activeVehicle: ScenePedestrianVehicleActor;
+  combatThreats?: readonly ScenePedestrianCombatThreat[];
   onFootActor?: ScenePedestrianActor | null;
 }): PedestrianThreat[] {
   const threats: PedestrianThreat[] = [
@@ -84,6 +92,10 @@ function createThreats(options: {
       position: options.onFootActor.mesh.position,
       radius: ON_FOOT_THREAT_RADIUS
     });
+  }
+
+  if (options.combatThreats) {
+    threats.push(...options.combatThreats);
   }
 
   return threats;
@@ -138,16 +150,17 @@ export function disposeScenePedestrianSystem(pedestrianSystem: PedestrianSystem 
 }
 
 export function updateScenePedestrians(options: UpdateScenePedestriansOptions): PedestrianEvent[] {
-  const { activeVehicle, deltaSeconds, onFootActor, pedestrianSystem } = options;
+  const { activeVehicle, combatHits = [], combatThreats = [], deltaSeconds, onFootActor, pedestrianSystem } = options;
 
   if (pedestrianSystem === null) {
     return [];
   }
 
   return pedestrianSystem.update({
+    combatHits,
     collisions: createVehicleCollisions(pedestrianSystem, activeVehicle),
     deltaSeconds,
-    threats: createThreats({ activeVehicle, onFootActor })
+    threats: createThreats({ activeVehicle, combatThreats, onFootActor })
   });
 }
 

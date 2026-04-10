@@ -112,6 +112,7 @@ describe("pedestrian scene runtime", () => {
     });
 
     expect(update).toHaveBeenCalledWith({
+      combatHits: [],
       collisions: [
         expect.objectContaining({
           impactSpeed: expect.any(Number),
@@ -131,6 +132,63 @@ describe("pedestrian scene runtime", () => {
         })
       ])
     });
+  });
+
+  it("forwards explicit combat hits and gunfire threats through the pedestrian scene seam", () => {
+    const update = vi.fn(() => []);
+    const pedestrianSystem = {
+      consumeEvents: () => [],
+      dispose: () => {},
+      getPedestrians: () => [],
+      update
+    } as unknown as Parameters<typeof updateScenePedestrians>[0]["pedestrianSystem"];
+
+    updateScenePedestrians({
+      activeVehicle: {
+        mesh: {
+          name: "starter-vehicle",
+          position: new Vector3(0, 1.7, 0)
+        },
+        physicsAggregate: {
+          body: {
+            getLinearVelocity: () => Vector3.Zero()
+          }
+        }
+      },
+      combatHits: [
+        {
+          pedestrianId: "ped-1",
+          sourceId: "combat-shot-1"
+        }
+      ],
+      combatThreats: [
+        {
+          id: "combat-shot-1",
+          kind: "gunfire",
+          position: { x: 1, y: 0.9, z: 2 },
+          radius: 4
+        }
+      ],
+      deltaSeconds: 1 / 60,
+      pedestrianSystem
+    });
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        combatHits: [
+          {
+            pedestrianId: "ped-1",
+            sourceId: "combat-shot-1"
+          }
+        ],
+        threats: expect.arrayContaining([
+          expect.objectContaining({
+            id: "combat-shot-1",
+            kind: "gunfire"
+          })
+        ])
+      })
+    );
   });
 
   it("adds pedestrian telemetry in an additive way without changing readiness or camera fields", () => {

@@ -64,10 +64,24 @@ export interface CreateSceneChaosRuntimeOptions {
 
 export interface UpdateSceneChaosOptions {
   activeVehicle: SceneChaosVehicleActor;
+  combatPropHits?: readonly SceneChaosPropHit[];
+  combatVehicleHits?: readonly SceneChaosVehicleHit[];
   deltaSeconds: number;
   hijackableVehicles: readonly SceneChaosVehicleActor[];
   runtime: SceneChaosRuntime;
   trafficVehicles: readonly SceneChaosVehicleActor[];
+}
+
+export interface SceneChaosVehicleHit {
+  impactSpeed: number;
+  sourceId: string;
+  targetVehicleId: string;
+}
+
+export interface SceneChaosPropHit {
+  impactSpeed: number;
+  propId: string;
+  sourceId: string;
 }
 
 export interface ApplyChaosSceneTelemetryOptions {
@@ -379,10 +393,25 @@ export function updateSceneChaos(options: UpdateSceneChaosOptions): ChaosSceneEv
   const { propImpacts, vehicleImpacts: propVehicleImpacts } = collectVehiclePropImpacts(runtime, vehicles);
 
   vehicleImpacts.push(...propVehicleImpacts);
+  vehicleImpacts.push(
+    ...(options.combatVehicleHits ?? []).map((impact) => ({
+      impactSpeed: impact.impactSpeed,
+      sourceId: impact.sourceId,
+      sourceType: "combat" as const,
+      targetVehicleId: impact.targetVehicleId
+    }))
+  );
 
   const propEvents = runtime.breakablePropSystem.update({
     currentTimeSeconds: runtime.currentTimeSeconds,
-    impacts: propImpacts
+    impacts: [
+      ...propImpacts,
+      ...((options.combatPropHits ?? []).map((impact) => ({
+        impactSpeed: impact.impactSpeed,
+        propId: impact.propId,
+        sourceId: impact.sourceId
+      })) as typeof propImpacts)
+    ]
   });
 
   propEvents.forEach((event) => {

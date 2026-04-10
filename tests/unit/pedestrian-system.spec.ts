@@ -155,4 +155,58 @@ describe("pedestrian system", () => {
       ])
     );
   });
+
+  it("supports explicit combat hits and nearby gunfire threats without a vehicle collision", () => {
+    const system = createPedestrianSystem({ parent: root, plan: createPlan(), scene });
+    const pedestrian = system.getPedestrians()[0];
+
+    if (!pedestrian) {
+      throw new Error("Expected pedestrian runtime to be created");
+    }
+
+    const panicEvents = system.update({
+      combatHits: [],
+      deltaSeconds: 0.1,
+      threats: [
+        {
+          id: "combat-shot-1",
+          kind: "gunfire",
+          position: { x: 0.8, y: 0, z: 1.6 },
+          radius: 4
+        }
+      ]
+    });
+
+    expect(panicEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          pedestrianId: "ped-1",
+          sourceId: "combat-shot-1",
+          type: "pedestrian.panicked"
+        })
+      ])
+    );
+
+    const struckEvents = system.update({
+      combatHits: [
+        {
+          pedestrianId: "ped-1",
+          sourceId: "combat-shot-1"
+        }
+      ],
+      deltaSeconds: 0.1,
+      threats: []
+    });
+
+    expect(pedestrian.getSnapshot().currentState).toBe("struck");
+    expect(struckEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          pedestrianId: "ped-1",
+          sourceId: "combat-shot-1",
+          type: "pedestrian.struck"
+        })
+      ])
+    );
+  });
 });

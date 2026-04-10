@@ -23,10 +23,17 @@ describe("player possession runtime integration", () => {
 
   function createFrame(overrides: Partial<PlayerInputFrame> = {}): PlayerInputFrame {
     return {
+      combatControls: {
+        firePressed: false,
+        weaponCycleDirection: 0,
+        weaponSlotRequested: null,
+        ...overrides.combatControls
+      },
       interactionRequested: false,
       onFootMovement: {
         forward: 0,
-        right: 0
+        right: 0,
+        ...overrides.onFootMovement
       },
       switchVehicleRequested: false,
       vehicleControls: {
@@ -36,7 +43,8 @@ describe("player possession runtime integration", () => {
         handbrake: false,
         lookX: 0,
         lookY: 0,
-        lookInputSource: "none"
+        lookInputSource: "none",
+        ...overrides.vehicleControls
       },
       ...overrides
     };

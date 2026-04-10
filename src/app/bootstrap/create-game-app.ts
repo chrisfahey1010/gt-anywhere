@@ -8,6 +8,7 @@ import {
 } from "../state/session-state-machine";
 import { LocationEntryScreen } from "../../ui/shell/location-entry-screen";
 import { WorldNavigationHud } from "../../ui/hud/world-navigation-hud";
+import { WorldCombatHud } from "../../ui/hud/world-combat-hud";
 import {
   createWorldGenerationRequest,
   LocationResolver,
@@ -124,6 +125,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     onRetry: handleRetry
   });
   const navigationHud = new WorldNavigationHud({ host: hudHost });
+  const combatHud = new WorldCombatHud({ host: hudHost });
 
   let state = createInitialSessionState();
   let pendingWork = Promise.resolve();
@@ -132,11 +134,13 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   let sceneLoader = options.sceneLoader ?? null;
   let sceneLoaderPromise: Promise<WorldSceneLoader> | null = null;
   let removeNavigationSubscription = (): void => {};
+  let removeCombatSubscription = (): void => {};
 
   const render = (): void => {
     screen.render(state);
     renderHost.dataset.phase = state.phase;
     navigationHud.setVisible(state.phase === "world-ready");
+    combatHud.setVisible(state.phase === "world-ready");
   };
 
   const settlePendingWork = (work: Promise<unknown>): void => {
@@ -148,7 +152,9 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
 
   const disposeWorldScene = (): void => {
     removeNavigationSubscription();
+    removeCombatSubscription();
     removeNavigationSubscription = (): void => {};
+    removeCombatSubscription = (): void => {};
     navigationHud.clear();
     worldScene?.dispose();
     worldScene = null;
@@ -253,6 +259,11 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
       removeNavigationSubscription =
         worldScene.subscribeNavigation?.((snapshot) => {
           navigationHud.render(snapshot);
+        }) ?? (() => {});
+      removeCombatSubscription =
+        worldScene.subscribeCombat?.((options) => {
+          combatHud.updateWeapon(options.activeWeaponId as any);
+          combatHud.processEvents(options.events);
         }) ?? (() => {});
       const initialNavigationSnapshot = worldScene.getNavigationSnapshot?.();
 

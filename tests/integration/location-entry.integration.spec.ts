@@ -578,6 +578,40 @@ describe("location entry integration", () => {
     expect(host.textContent).toContain("Retry load");
   });
 
+  it("emits a typed combat-runtime initialization failure while preserving retry and edit flows", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const { sliceGenerator } = createSuccessfulWorldDependencies();
+    const sceneLoader: WorldSceneLoader = {
+      load: async () => {
+        throw createWorldSceneRuntimeError(
+          "STARTER_VEHICLE_POSSESSION_FAILED",
+          "vehicle-possession",
+          "The world combat runtime could not be initialized.",
+          { spawnCandidateId: "spawn-0" }
+        );
+      }
+    };
+
+    const app = await createGameApp({ host, sliceGenerator, sceneLoader });
+    const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationAliasQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    await app.whenIdle();
+
+    expect(app.getSnapshot().phase).toBe("world-load-error");
+    expect(app.getSnapshot().error).toMatchObject({
+      code: "STARTER_VEHICLE_POSSESSION_FAILED",
+      stage: "vehicle-possession"
+    });
+    expect(host.textContent).toContain("Edit location");
+    expect(host.textContent).toContain("Retry load");
+  });
+
   it("advances to a world-ready state without losing session identity or generated slice data", async () => {
     document.body.innerHTML = '<div id="app"></div>';
 
