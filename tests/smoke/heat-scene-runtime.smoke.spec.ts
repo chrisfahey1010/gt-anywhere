@@ -97,6 +97,8 @@ describe("heat scene runtime smoke", () => {
     expect(canvas.dataset.trafficVehicleCount).toBe("1");
     expect(canvas.dataset.pedestrianCount).toBe("2");
     expect(canvas.dataset.heatLevel).toBe("3");
+    expect(canvas.dataset.heatResponderCount).toBe("3");
+    expect(canvas.dataset.heatPursuitPhase).toBe("dispatching");
     expect(canvas.dataset.heatStage).toBe("high");
     expect(canvas.dataset.heatRecentEvents).toContain("pedestrian.struck");
     expect((scene.metadata as Record<string, unknown>).trafficVehicleCount).toBe(1);
@@ -115,6 +117,8 @@ describe("heat scene runtime smoke", () => {
     expect(canvas.dataset.trafficVehicleCount).toBe("1");
     expect(canvas.dataset.pedestrianCount).toBe("2");
     expect(canvas.dataset.heatLevel).toBe("0");
+    expect(canvas.dataset.heatResponderCount).toBe("0");
+    expect(canvas.dataset.heatPursuitPhase).toBe("none");
     expect(canvas.dataset.heatStage).toBe("calm");
     expect(canvas.dataset.heatRecentEvents).toBe("");
     expect(canvas.dataset.heatStageChanged).toBe("false");

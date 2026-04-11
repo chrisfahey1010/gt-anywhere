@@ -90,7 +90,10 @@ describe("world heat hud integration", () => {
             listener({
               events: [],
               snapshot: {
+                captureTimeRemainingSeconds: null,
+                escapeCooldownRemainingSeconds: 0,
                 escapePhase: "inactive",
+                failSignal: null,
                 level: 2,
                 maxScore: 100,
                 pursuitPhase: "none",
@@ -105,6 +108,7 @@ describe("world heat hud integration", () => {
                     timestampSeconds: 2
                   }
                 ],
+                responderCount: 0,
                 score: 36,
                 stage: "elevated",
                 stageThresholds: [0, 8, 24, 48, 72]
@@ -173,7 +177,10 @@ describe("world heat hud integration", () => {
         const snapshot =
           loadCount === 1
             ? {
+                captureTimeRemainingSeconds: null,
+                escapeCooldownRemainingSeconds: 0,
                 escapePhase: "inactive" as const,
+                failSignal: null,
                 level: 3 as const,
                 maxScore: 100,
                 pursuitPhase: "none" as const,
@@ -188,16 +195,21 @@ describe("world heat hud integration", () => {
                     timestampSeconds: 3
                   }
                 ],
+                responderCount: 0,
                 score: 50,
                 stage: "high" as const,
                 stageThresholds: [0, 8, 24, 48, 72] as const
               }
             : {
+                captureTimeRemainingSeconds: null,
+                escapeCooldownRemainingSeconds: 0,
                 escapePhase: "inactive" as const,
+                failSignal: null,
                 level: 0 as const,
                 maxScore: 100,
                 pursuitPhase: "none" as const,
                 recentEvents: [],
+                responderCount: 0,
                 score: 0,
                 stage: "calm" as const,
                 stageThresholds: [0, 8, 24, 48, 72] as const
@@ -241,5 +253,122 @@ describe("world heat hud integration", () => {
     expect(hud.hidden).toBe(false);
     expect(hud.textContent).toContain("CALM");
     expect(hud.textContent).toContain("KEEP IT COOL");
+  });
+
+  it("updates the HUD when a typed run outcome arrives from the scene subscription", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => ({
+        ok: true,
+        manifest,
+        spawnCandidate: manifest.spawnCandidates[0]
+      })
+    };
+    let runOutcomeListener:
+      | ((options: {
+          events: Array<{ outcome: "BUSTED"; snapshot: { outcome: "BUSTED"; outcomeTimeRemainingSeconds: number; phase: "showing-outcome"; recoveryTimeRemainingSeconds: null }; timestampSeconds: number; type: "run.outcome.changed" }>;
+          snapshot: {
+            outcome: "BUSTED";
+            outcomeTimeRemainingSeconds: number;
+            phase: "showing-outcome";
+            recoveryTimeRemainingSeconds: null;
+          };
+        }) => void)
+      | undefined;
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost }) => {
+        renderHost.innerHTML = '<div data-testid="world-ready-scene">Fake world scene</div>';
+
+        return {
+          canvas: document.createElement("canvas"),
+          subscribeHeat: (listener) => {
+            listener({
+              events: [],
+              snapshot: {
+                captureTimeRemainingSeconds: null,
+                escapeCooldownRemainingSeconds: 0,
+                escapePhase: "inactive",
+                failSignal: null,
+                level: 2,
+                maxScore: 100,
+                pursuitPhase: "active",
+                recentEvents: [],
+                responderCount: 2,
+                score: 36,
+                stage: "elevated",
+                stageThresholds: [0, 8, 24, 48, 72]
+              }
+            });
+            return () => {};
+          },
+          subscribeRunOutcome: (listener) => {
+            runOutcomeListener = listener as typeof runOutcomeListener;
+            listener({
+              events: [],
+              snapshot: {
+                outcome: null,
+                outcomeTimeRemainingSeconds: null,
+                phase: "none",
+                recoveryTimeRemainingSeconds: null
+              }
+            });
+            return () => {
+              runOutcomeListener = undefined;
+            };
+          },
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+    const app = await createGameApp({
+      host,
+      sliceGenerator,
+      sceneLoader,
+      clock: () => "2026-04-10T00:00:00.000Z"
+    });
+
+    const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationAliasQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    await app.whenIdle();
+
+    const hud = host.querySelector('[data-testid="world-heat-hud"]') as HTMLElement;
+
+    if (!runOutcomeListener) {
+      throw new Error("Expected run outcome listener to exist");
+    }
+
+    runOutcomeListener({
+      events: [
+        {
+          outcome: "BUSTED",
+          snapshot: {
+            outcome: "BUSTED",
+            outcomeTimeRemainingSeconds: 1.5,
+            phase: "showing-outcome",
+            recoveryTimeRemainingSeconds: null
+          },
+          timestampSeconds: 2,
+          type: "run.outcome.changed"
+        }
+      ],
+      snapshot: {
+        outcome: "BUSTED",
+        outcomeTimeRemainingSeconds: 1.5,
+        phase: "showing-outcome",
+        recoveryTimeRemainingSeconds: null
+      }
+    });
+
+    expect(hud.textContent).toContain("PURSUIT ACTIVE");
+    expect(hud.textContent).toContain("2 RESPONDERS");
+    expect(hud.textContent).toContain("BUSTED");
   });
 });

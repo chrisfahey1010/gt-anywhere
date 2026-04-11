@@ -74,11 +74,21 @@ import {
   updateSceneHeat
 } from "./heat-scene-runtime";
 import {
+  createSceneResponderRuntime,
+  disposeSceneResponderRuntime,
+  type SceneResponderRuntime
+} from "./responder-scene-runtime";
+import {
   REPLAY_VEHICLE_TYPES,
   type ReplaySelection,
   type ReplayStarterVehicleType
 } from "../../app/config/replay-options";
 import type { HeatEvent, HeatRuntimeSnapshot } from "../../sandbox/heat/heat-runtime";
+import {
+  createRunOutcomeRuntime,
+  type RunOutcomeEvent,
+  type RunOutcomeSnapshot
+} from "../../sandbox/reset/run-outcome-runtime";
 
 const AVAILABLE_VEHICLE_TYPES = REPLAY_VEHICLE_TYPES;
 const DEFAULT_VEHICLE_TYPE = AVAILABLE_VEHICLE_TYPES[0];
@@ -97,6 +107,7 @@ export interface WorldSceneHandle {
   subscribeNavigation?(listener: (snapshot: WorldNavigationSnapshot) => void): () => void;
   subscribeCombat?(listener: (options: { activeWeaponId: string; events: any[] }) => void): () => void;
   subscribeHeat?(listener: (options: { events: HeatEvent[]; snapshot: HeatRuntimeSnapshot }) => void): () => void;
+  subscribeRunOutcome?(listener: (options: { events: RunOutcomeEvent[]; snapshot: RunOutcomeSnapshot }) => void): () => void;
   switchVehicle?(vehicleType: string): Promise<void>;
 }
 
@@ -412,6 +423,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
 
     let vehicleManager: VehicleManager | null = null;
     let hijackableVehicles: ManagedVehicleRuntime[] = [];
+    let responderRuntime: SceneResponderRuntime | null = null;
     let trafficSystem: TrafficSystem | null = null;
 
     try {
@@ -475,7 +487,14 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
 
       trafficSystem = await createTrafficSystem({
         controller,
-        getObstacleVehicles: () => (vehicleManager === null ? [] : [vehicleManager.getActiveVehicle(), ...hijackableVehicles]),
+        getObstacleVehicles: () =>
+          vehicleManager === null
+            ? []
+            : [
+                vehicleManager.getActiveVehicle(),
+                ...hijackableVehicles,
+                ...(responderRuntime?.getVehicles() ?? [])
+              ],
         manifest,
         parent: worldRoot,
         scene,
@@ -588,11 +607,39 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         }
       );
     }
+    try {
+      responderRuntime = await createSceneResponderRuntime({
+        controller,
+        manifest,
+        parent: worldRoot,
+        scene,
+        spawnCandidate
+      });
+    } catch (error) {
+      controller.dispose();
+      disposeSceneHeatRuntime(heatRuntime);
+      disposeSceneCombatRuntime(combatRuntime);
+      disposeScenePedestrianSystem(pedestrianSystem);
+      disposeSceneChaosRuntime(chaosRuntime);
+      trafficSystem?.dispose();
+      hijackableVehicles.forEach((vehicle) => vehicle.dispose());
+      vehicleManager.dispose();
+      throw createWorldSceneRuntimeError(
+        "WORLD_SCENE_LOAD_FAILED",
+        "world-loading",
+        "The responder runtime could not be initialized.",
+        {
+          error: error instanceof Error ? error.message : String(error),
+          spawnCandidateId: spawnCandidate.id
+        }
+      );
+    }
     let currentInputFrame: PlayerInputFrame = controller.captureInputFrame();
     let recentChaosEvents: ReturnType<typeof updateSceneChaos> = [];
     let recentHeatEvents: ReturnType<typeof updateSceneHeat> = [];
     let recentPedestrianEvents: ReturnType<typeof updateScenePedestrians> = [];
     let worldTimeSeconds = 0;
+    const runOutcomeRuntime = createRunOutcomeRuntime();
     const possessionRuntime: PlayerPossessionRuntime = createPlayerPossessionRuntime({
       blockingMeshes: exitBlockingMeshes,
       getInteractableVehicles: () => hijackableVehicles.filter((vehicle) => isVehicleHijackInteractionAllowed(vehicle)),
@@ -613,6 +660,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     const navigationListeners = new Set<(snapshot: WorldNavigationSnapshot) => void>();
     const combatListeners = new Set<(options: { activeWeaponId: string; events: any[] }) => void>();
     const heatListeners = new Set<(options: { events: HeatEvent[]; snapshot: HeatRuntimeSnapshot }) => void>();
+    const runOutcomeListeners = new Set<(options: { events: RunOutcomeEvent[]; snapshot: RunOutcomeSnapshot }) => void>();
     const navigationRoadSnapshots = createWorldNavigationRoadSnapshots(manifest.roads);
 
     const completeHijack = (nextVehicle: ManagedVehicleRuntime): void => {
@@ -736,6 +784,13 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       }
 
       trafficSystem?.update(deltaTimeMs / 1000);
+      const responderUpdate = responderRuntime.update({
+        activeVehicle: vehicleManager.getActiveVehicle(),
+        deltaSeconds: deltaTimeMs / 1000,
+        heatSnapshot: heatRuntime.getSnapshot()
+      });
+      const trafficVehicles = trafficSystem?.getVehicles() ?? [];
+      const responderVehicles = responderRuntime.getVehicles();
       const combatUpdate = updateSceneCombat({
         activeVehicle: vehicleManager.getActiveVehicle(),
         chaosRuntime,
@@ -748,7 +803,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         onFootActor: possessionRuntime.getOnFootRuntime(),
         pedestrianSystem,
         runtime: combatRuntime,
-        trafficVehicles: trafficSystem?.getVehicles() ?? []
+        trafficVehicles: [...trafficVehicles, ...responderVehicles]
       });
 
       if (combatListeners.size > 0 && combatUpdate.events.length > 0) {
@@ -773,14 +828,26 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         deltaSeconds: deltaTimeMs / 1000,
         hijackableVehicles,
         runtime: chaosRuntime,
-        trafficVehicles: trafficSystem?.getVehicles() ?? []
+        trafficVehicles: [...trafficVehicles, ...responderVehicles]
       });
       const heatEvents = updateSceneHeat({
         chaosEvents,
         combatEvents: combatUpdate.events,
         currentTimeSeconds: worldTimeSeconds,
         pedestrianEvents,
+        pursuitContact: responderUpdate.pursuitContact,
+        responderCount: responderUpdate.responderCount,
         runtime: heatRuntime
+      });
+      const runOutcomeEvents = runOutcomeRuntime.update({
+        activeVehicleDamage: vehicleManager.getActiveVehicle().damageState,
+        currentTimeSeconds: worldTimeSeconds,
+        hasRecoveryVehicle:
+          possessionRuntime.getStoredVehicle() !== null ||
+          hijackableVehicles.length > 0 ||
+          vehicleManager.getActiveVehicle().damageState.normalizedSeverity < 1,
+        heatSnapshot: heatRuntime.getSnapshot(),
+        possessionMode
       });
 
       if (pedestrianEvents.length > 0) {
@@ -799,10 +866,19 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
           listener({ events: heatEvents, snapshot: heatSnapshot });
         });
       }
+
+      if (runOutcomeListeners.size > 0 && runOutcomeEvents.length > 0) {
+        const runOutcomeSnapshot = runOutcomeRuntime.getSnapshot();
+        runOutcomeListeners.forEach((listener) => {
+          listener({ events: runOutcomeEvents, snapshot: runOutcomeSnapshot });
+        });
+      }
     };
 
     const syncCanvasTelemetry = (): void => {
+      const runOutcomeSnapshot = runOutcomeRuntime.getSnapshot();
       const trafficVehicles = trafficSystem?.getVehicles() ?? [];
+      const responderVehicles = responderRuntime.getVehicles();
 
       syncWorldSceneTelemetry({
         activeVehicle: vehicleManager.getActiveVehicle(),
@@ -816,11 +892,18 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
 
       if (scene.metadata && typeof scene.metadata === "object") {
         Object.assign(scene.metadata, {
+          runOutcome: runOutcomeSnapshot.outcome,
+          runOutcomePhase: runOutcomeSnapshot.phase,
+          responderVehicleCount: responderVehicles.length,
+          responderVehicleIds: responderVehicles.map((vehicle) => vehicle.mesh.name),
           trafficVehicleCount: trafficVehicles.length,
           trafficVehicleIds: trafficVehicles.map((vehicle) => vehicle.mesh.name)
         });
       }
 
+      canvas.dataset.runOutcome = runOutcomeSnapshot.outcome ?? "none";
+      canvas.dataset.runOutcomePhase = runOutcomeSnapshot.phase;
+      canvas.dataset.responderVehicleCount = String(responderVehicles.length);
       canvas.dataset.trafficVehicleCount = String(trafficVehicles.length);
       applyPedestrianSceneTelemetry({
         canvas,
@@ -833,7 +916,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         events: recentChaosEvents,
         runtime: chaosRuntime,
         scene,
-        vehicles: [vehicleManager.getActiveVehicle(), ...hijackableVehicles, ...trafficVehicles]
+        vehicles: [vehicleManager.getActiveVehicle(), ...hijackableVehicles, ...trafficVehicles, ...responderVehicles]
       });
       applyCombatSceneTelemetry({
         canvas,
@@ -886,6 +969,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     } catch (error) {
       controller.dispose();
       possessionRuntime.dispose();
+      disposeSceneResponderRuntime(responderRuntime);
       disposeSceneHeatRuntime(heatRuntime);
       disposeSceneCombatRuntime(combatRuntime);
       disposeScenePedestrianSystem(pedestrianSystem);
@@ -918,6 +1002,8 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         heatStage: heatRuntime.getSnapshot().stage,
         hijackableVehicleCount: hijackableVehicles.length,
         hijackableVehicleIds: hijackableVehicles.map((vehicle) => vehicle.mesh.name),
+      responderVehicleCount: responderRuntime.getVehicles().length,
+      responderVehicleIds: responderRuntime.getVehicles().map((vehicle) => vehicle.mesh.name),
       trafficVehicleCount: trafficSystem?.getVehicles().length ?? 0,
       trafficVehicleIds: trafficSystem?.getVehicles().map((vehicle) => vehicle.mesh.name) ?? [],
       readinessMilestone: "controllable-vehicle",
@@ -953,9 +1039,11 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         scene.unregisterBeforeRender(updateWorldRuntime);
         navigationListeners.clear();
         heatListeners.clear();
+        runOutcomeListeners.clear();
         removeVehicleSwitchListener();
         controller.dispose();
         possessionRuntime.dispose();
+        disposeSceneResponderRuntime(responderRuntime);
         disposeSceneHeatRuntime(heatRuntime);
         disposeSceneCombatRuntime(combatRuntime);
         disposeScenePedestrianSystem(pedestrianSystem);
@@ -993,6 +1081,13 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         listener({ events: [], snapshot: heatRuntime.getSnapshot() });
         return () => {
           heatListeners.delete(listener);
+        };
+      },
+      subscribeRunOutcome: (listener) => {
+        runOutcomeListeners.add(listener);
+        listener({ events: [], snapshot: runOutcomeRuntime.getSnapshot() });
+        return () => {
+          runOutcomeListeners.delete(listener);
         };
       },
       switchVehicle: switchActiveVehicle

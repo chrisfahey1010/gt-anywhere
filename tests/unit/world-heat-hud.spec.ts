@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { WorldHeatHud } from "../../src/ui/hud/world-heat-hud";
+import type { RunOutcomeSnapshot } from "../../src/sandbox/reset/run-outcome-runtime";
+
+function createIdleRunOutcomeSnapshot(overrides: Partial<RunOutcomeSnapshot> = {}): RunOutcomeSnapshot {
+  return {
+    outcome: null,
+    outcomeTimeRemainingSeconds: null,
+    phase: "none",
+    recoveryTimeRemainingSeconds: null,
+    ...overrides
+  };
+}
 
 describe("world heat hud", () => {
   it("renders a lightweight staged indicator with recent escalation copy", () => {
@@ -8,10 +19,13 @@ describe("world heat hud", () => {
 
     hud.setVisible(true);
     hud.render({
-      escapePhase: "inactive",
+      captureTimeRemainingSeconds: null,
+      escapeCooldownRemainingSeconds: 0,
+      escapePhase: "breaking-contact",
+      failSignal: null,
       level: 3,
       maxScore: 100,
-      pursuitPhase: "none",
+      pursuitPhase: "active",
       recentEvents: [
         {
           dedupeKey: "combat.weapon.fired:player",
@@ -41,10 +55,11 @@ describe("world heat hud", () => {
           timestampSeconds: 3
         }
       ],
+      responderCount: 2,
       score: 50,
       stage: "high",
       stageThresholds: [0, 8, 24, 48, 72]
-    });
+    }, createIdleRunOutcomeSnapshot({ outcome: "BUSTED", phase: "showing-outcome" }));
 
     const root = host.querySelector('[data-testid="world-heat-hud"]') as HTMLElement;
     const pips = host.querySelectorAll(".world-heat-hud__pip--active");
@@ -52,6 +67,10 @@ describe("world heat hud", () => {
     expect(root.hidden).toBe(false);
     expect(root.textContent).toContain("HEAT");
     expect(root.textContent).toContain("HIGH");
+    expect(root.textContent).toContain("PURSUIT ACTIVE");
+    expect(root.textContent).toContain("ESCAPE BREAKING CONTACT");
+    expect(root.textContent).toContain("2 RESPONDERS");
+    expect(root.textContent).toContain("BUSTED");
     expect(root.textContent).toContain("PROP DAMAGE");
     expect(pips).toHaveLength(3);
   });
@@ -62,11 +81,15 @@ describe("world heat hud", () => {
 
     hud.setVisible(true);
     hud.render({
+      captureTimeRemainingSeconds: null,
+      escapeCooldownRemainingSeconds: 0,
       escapePhase: "inactive",
+      failSignal: null,
       level: 1,
       maxScore: 100,
       pursuitPhase: "none",
       recentEvents: [],
+      responderCount: 0,
       score: 8,
       stage: "watch",
       stageThresholds: [0, 8, 24, 48, 72]

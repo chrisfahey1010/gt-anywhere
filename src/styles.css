@@ -435,7 +435,7 @@ h1 {
   right: 24px;
   display: grid;
   gap: 6px;
-  min-width: 148px;
+  min-width: 212px;
   padding: 12px 14px;
   color: #f8fafc;
   pointer-events: none;
@@ -447,7 +447,10 @@ h1 {
 }
 
 .world-heat-hud__title,
+.world-heat-hud__phase,
 .world-heat-hud__score,
+.world-heat-hud__support,
+.world-heat-hud__outcome,
 .world-heat-hud__event {
   font-size: 0.72rem;
   letter-spacing: 0.1em;
@@ -466,6 +469,17 @@ h1 {
 
 .world-heat-hud__score {
   color: rgba(255, 228, 230, 0.82);
+}
+
+.world-heat-hud__phase,
+.world-heat-hud__support {
+  color: rgba(255, 228, 230, 0.82);
+  font-weight: 700;
+}
+
+.world-heat-hud__outcome {
+  color: #fef08a;
+  font-weight: 800;
 }
 
 .world-heat-hud__pips {

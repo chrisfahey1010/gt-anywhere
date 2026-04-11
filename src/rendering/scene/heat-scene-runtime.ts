@@ -2,6 +2,7 @@ import type { PedestrianEvent } from "../../pedestrians/runtime/pedestrian-syste
 import {
   createHeatRuntime,
   type HeatEvent,
+  type HeatPursuitContact,
   type HeatRuntime,
   type HeatRuntimeSnapshot
 } from "../../sandbox/heat/heat-runtime";
@@ -18,6 +19,8 @@ export interface UpdateSceneHeatOptions {
   combatEvents?: readonly CombatEvent[];
   currentTimeSeconds?: number;
   pedestrianEvents?: readonly PedestrianEvent[];
+  pursuitContact?: HeatPursuitContact;
+  responderCount?: number;
   runtime: SceneHeatRuntime;
 }
 
@@ -109,6 +112,14 @@ export function updateSceneHeat(options: UpdateSceneHeatOptions): HeatEvent[] {
     heatEvents.push(...recordChaosHeat(runtime.heatRuntime, event, currentTimeSeconds));
   });
 
+  heatEvents.push(
+    ...runtime.heatRuntime.advance({
+      currentTimeSeconds,
+      pursuitContact: options.pursuitContact,
+      responderCount: options.responderCount
+    })
+  );
+
   return heatEvents;
 }
 
@@ -120,9 +131,11 @@ export function applyHeatSceneTelemetry(options: ApplyHeatSceneTelemetryOptions)
   if (options.scene.metadata && typeof options.scene.metadata === "object") {
     Object.assign(options.scene.metadata, {
       heatEscapePhase: snapshot.escapePhase,
+      heatFailSignal: snapshot.failSignal,
       heatLevel: snapshot.level,
       heatPursuitPhase: snapshot.pursuitPhase,
       heatRecentEvents: recentEventTypes,
+      heatResponderCount: snapshot.responderCount,
       heatScore: snapshot.score,
       heatStage: snapshot.stage,
       heatStageChanged: stageChanged
@@ -130,9 +143,11 @@ export function applyHeatSceneTelemetry(options: ApplyHeatSceneTelemetryOptions)
   }
 
   options.canvas.dataset.heatEscapePhase = snapshot.escapePhase;
+  options.canvas.dataset.heatFailSignal = snapshot.failSignal ?? "none";
   options.canvas.dataset.heatLevel = String(snapshot.level);
   options.canvas.dataset.heatPursuitPhase = snapshot.pursuitPhase;
   options.canvas.dataset.heatRecentEvents = recentEventTypes.join(",");
+  options.canvas.dataset.heatResponderCount = String(snapshot.responderCount);
   options.canvas.dataset.heatScore = String(snapshot.score);
   options.canvas.dataset.heatStage = snapshot.stage;
   options.canvas.dataset.heatStageChanged = String(stageChanged);

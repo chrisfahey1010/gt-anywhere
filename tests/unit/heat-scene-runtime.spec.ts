@@ -81,10 +81,14 @@ describe("heat scene runtime", () => {
       "heat.level.changed",
       "heat.incident.recorded",
       "heat.level.changed",
-      "heat.incident.recorded"
+      "heat.incident.recorded",
+      "heat.pursuit.started"
     ]);
     expect(runtime.getSnapshot()).toMatchObject({
+      escapePhase: "inactive",
       level: 3,
+      pursuitPhase: "dispatching",
+      responderCount: 3,
       score: 66,
       stage: "high"
     });
@@ -177,9 +181,16 @@ describe("heat scene runtime", () => {
       runtime
     });
 
-    expect(events.map((event) => event.type)).toEqual(["heat.incident.recorded", "heat.level.changed"]);
+    expect(events.map((event) => event.type)).toEqual([
+      "heat.incident.recorded",
+      "heat.level.changed",
+      "heat.pursuit.started"
+    ]);
     expect(runtime.getSnapshot()).toMatchObject({
+      escapePhase: "inactive",
       level: 1,
+      pursuitPhase: "dispatching",
+      responderCount: 1,
       score: 16,
       stage: "watch"
     });
@@ -234,6 +245,38 @@ describe("heat scene runtime", () => {
       heatStage: "watch",
       heatStageChanged: true,
       readinessMilestone: "controllable-vehicle"
+    });
+  });
+
+  it("advances time-based pursuit state from scene updates without inventing a second heat store", () => {
+    const runtime = createSceneHeatRuntime();
+
+    updateSceneHeat({
+      combatEvents: [
+        {
+          impactSpeed: 11.5,
+          shotCount: 1,
+          timestampSeconds: 1,
+          type: "combat.weapon.fired",
+          weaponId: "rifle"
+        }
+      ],
+      currentTimeSeconds: 1,
+      runtime
+    });
+
+    const events = updateSceneHeat({
+      currentTimeSeconds: 6,
+      pursuitContact: "broken",
+      responderCount: 1,
+      runtime
+    });
+
+    expect(events.map((event) => event.type)).toContain("heat.pursuit.contact.lost");
+    expect(runtime.getSnapshot()).toMatchObject({
+      escapePhase: "breaking-contact",
+      pursuitPhase: "active",
+      responderCount: 1
     });
   });
 });

@@ -1,4 +1,5 @@
 import type { HeatRuntimeSnapshot } from "../../sandbox/heat/heat-runtime";
+import type { RunOutcomeSnapshot } from "../../sandbox/reset/run-outcome-runtime";
 
 interface WorldHeatHudOptions {
   host: HTMLElement;
@@ -17,6 +18,36 @@ function formatHeatIncidentLabel(incidentType: HeatRuntimeSnapshot["recentEvents
   }
 }
 
+function formatPursuitPhaseLabel(phase: HeatRuntimeSnapshot["pursuitPhase"]): string {
+  switch (phase) {
+    case "none":
+      return "PURSUIT NONE";
+    case "dispatching":
+      return "PURSUIT DISPATCHING";
+    case "active":
+      return "PURSUIT ACTIVE";
+    case "capturing":
+      return "PURSUIT CAPTURING";
+  }
+}
+
+function formatEscapePhaseLabel(phase: HeatRuntimeSnapshot["escapePhase"]): string {
+  switch (phase) {
+    case "inactive":
+      return "ESCAPE INACTIVE";
+    case "breaking-contact":
+      return "ESCAPE BREAKING CONTACT";
+    case "cooldown":
+      return "ESCAPE COOLDOWN";
+    case "cleared":
+      return "ESCAPE CLEARED";
+  }
+}
+
+function formatResponderCount(count: number): string {
+  return `${count} RESPONDER${count === 1 ? "" : "S"}`;
+}
+
 export class WorldHeatHud {
   private readonly root: HTMLDivElement;
 
@@ -24,7 +55,13 @@ export class WorldHeatHud {
 
   private readonly scoreLabel: HTMLDivElement;
 
+  private readonly phaseLabel: HTMLDivElement;
+
+  private readonly responderLabel: HTMLDivElement;
+
   private readonly eventLabel: HTMLDivElement;
+
+  private readonly outcomeLabel: HTMLDivElement;
 
   private readonly pips: HTMLSpanElement[];
 
@@ -50,6 +87,12 @@ export class WorldHeatHud {
     this.scoreLabel = document.createElement("div");
     this.scoreLabel.className = "world-heat-hud__score";
 
+    this.phaseLabel = document.createElement("div");
+    this.phaseLabel.className = "world-heat-hud__phase";
+
+    this.responderLabel = document.createElement("div");
+    this.responderLabel.className = "world-heat-hud__support";
+
     const pips = document.createElement("div");
     pips.className = "world-heat-hud__pips";
     this.pips = Array.from({ length: 4 }, (_, index) => {
@@ -64,7 +107,19 @@ export class WorldHeatHud {
     this.eventLabel = document.createElement("div");
     this.eventLabel.className = "world-heat-hud__event";
 
-    this.root.append(title, this.stageLabel, this.scoreLabel, pips, this.eventLabel);
+    this.outcomeLabel = document.createElement("div");
+    this.outcomeLabel.className = "world-heat-hud__outcome";
+
+    this.root.append(
+      title,
+      this.stageLabel,
+      this.scoreLabel,
+      this.phaseLabel,
+      this.responderLabel,
+      pips,
+      this.outcomeLabel,
+      this.eventLabel
+    );
     options.host.append(this.root);
   }
 
@@ -77,20 +132,26 @@ export class WorldHeatHud {
     this.hasSnapshot = false;
     this.stageLabel.textContent = "";
     this.scoreLabel.textContent = "";
+    this.phaseLabel.textContent = "";
+    this.responderLabel.textContent = "";
     this.eventLabel.textContent = "";
+    this.outcomeLabel.textContent = "";
     this.pips.forEach((pip) => {
       pip.classList.remove("world-heat-hud__pip--active");
     });
     this.syncVisibility();
   }
 
-  render(snapshot: HeatRuntimeSnapshot): void {
+  render(snapshot: HeatRuntimeSnapshot, runOutcomeSnapshot?: RunOutcomeSnapshot | null): void {
     const latestEvent = snapshot.recentEvents[snapshot.recentEvents.length - 1] ?? null;
 
     this.hasSnapshot = true;
     this.stageLabel.textContent = snapshot.stage.toUpperCase();
     this.scoreLabel.textContent = `${snapshot.score}/${snapshot.maxScore}`;
+    this.phaseLabel.textContent = `${formatPursuitPhaseLabel(snapshot.pursuitPhase)} • ${formatEscapePhaseLabel(snapshot.escapePhase)}`;
+    this.responderLabel.textContent = formatResponderCount(snapshot.responderCount);
     this.eventLabel.textContent = latestEvent ? formatHeatIncidentLabel(latestEvent.incidentType) : "KEEP IT COOL";
+    this.outcomeLabel.textContent = runOutcomeSnapshot?.outcome ?? "";
     this.pips.forEach((pip, index) => {
       pip.classList.toggle("world-heat-hud__pip--active", index < snapshot.level);
     });

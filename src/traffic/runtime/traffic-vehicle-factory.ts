@@ -6,6 +6,7 @@ import { createVehicleFactory, type VehicleTuning } from "../../vehicles/physics
 
 export interface TrafficVehicleMesh {
   getDirection?(axis: Vector3): Vector3;
+  metadata?: Record<string, unknown>;
   name: string;
   position: Vector3;
   rotation: {

@@ -1,6 +1,7 @@
 import { GameEventBus } from "../events/game-events";
 import type { ReplaySelection } from "../config/replay-options";
 import { createLogger, type Logger } from "../logging/logger";
+import { shouldHandleQuickRestartShortcut } from "./quick-restart-shortcut";
 import {
   createInitialSessionState,
   transitionSessionState,
@@ -24,6 +25,8 @@ import {
 import { DefaultWorldSliceGenerator, type WorldSliceGenerator } from "../../world/generation/world-slice-generator";
 import type { SliceManifest, SpawnCandidate } from "../../world/chunks/slice-manifest";
 import type { WorldSceneHandle, WorldSceneLoader } from "../../rendering/scene/create-world-scene";
+import type { HeatRuntimeSnapshot } from "../../sandbox/heat/heat-runtime";
+import type { RunOutcomeSnapshot } from "../../sandbox/reset/run-outcome-runtime";
 
 export interface CreateGameAppOptions {
   host: HTMLElement;
@@ -128,6 +131,8 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   const navigationHud = new WorldNavigationHud({ host: hudHost });
   const combatHud = new WorldCombatHud({ host: hudHost });
   let heatHud: WorldHeatHud | null = null;
+  let latestHeatSnapshot: HeatRuntimeSnapshot | null = null;
+  let latestRunOutcomeSnapshot: RunOutcomeSnapshot | null = null;
   let shellHiddenInWorldReady = false;
 
   let state = createInitialSessionState();
@@ -139,6 +144,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   let removeNavigationSubscription = (): void => {};
   let removeCombatSubscription = (): void => {};
   let removeHeatSubscription = (): void => {};
+  let removeRunOutcomeSubscription = (): void => {};
 
   const render = (): void => {
     screen.render(state);
@@ -165,6 +171,17 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
 
   window.addEventListener("keydown", handleShellVisibilityShortcut);
 
+  const handleQuickRestartShortcut = (event: KeyboardEvent): void => {
+    if (!shouldHandleQuickRestartShortcut({ event, phase: state.phase })) {
+      return;
+    }
+
+    event.preventDefault();
+    requestCachedRestart(null);
+  };
+
+  window.addEventListener("keydown", handleQuickRestartShortcut);
+
   const settlePendingWork = (work: Promise<unknown>): void => {
     pendingWork = work.then(
       () => undefined,
@@ -176,14 +193,39 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     removeNavigationSubscription();
     removeCombatSubscription();
     removeHeatSubscription();
+    removeRunOutcomeSubscription();
     removeNavigationSubscription = (): void => {};
     removeCombatSubscription = (): void => {};
     removeHeatSubscription = (): void => {};
+    removeRunOutcomeSubscription = (): void => {};
     navigationHud.clear();
     heatHud?.clear();
+    latestHeatSnapshot = null;
+    latestRunOutcomeSnapshot = null;
     worldScene?.dispose();
     worldScene = null;
     renderHost.innerHTML = "";
+  };
+
+  const requestCachedRestart = (replaySelection: ReplaySelection | null): void => {
+    if (state.phase !== "world-ready" || state.handoff === null) {
+      return;
+    }
+
+    const request = state.handoff;
+    const cachedWorldLoadData = resolveCachedWorldLoadData();
+
+    if (cachedWorldLoadData === null) {
+      return;
+    }
+
+    state =
+      replaySelection === null
+        ? transitionSessionState(state, { type: "world.restart.requested" })
+        : transitionSessionState(state, { type: "world.replay.requested", selection: replaySelection });
+    render();
+
+    settlePendingWork(runCachedWorldLoad(request, cachedWorldLoadData, replaySelection));
   };
 
   const getSceneLoader = async (): Promise<WorldSceneLoader> => {
@@ -294,9 +336,22 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
         heatHud ??= new WorldHeatHud({ host: hudHost });
         removeHeatSubscription =
           worldScene.subscribeHeat((options) => {
-            heatHud?.render(options.snapshot);
+            latestHeatSnapshot = options.snapshot;
+            heatHud?.render(options.snapshot, latestRunOutcomeSnapshot);
           }) ?? (() => {});
       }
+      removeRunOutcomeSubscription =
+        worldScene.subscribeRunOutcome?.((options) => {
+          latestRunOutcomeSnapshot = options.snapshot;
+
+          if (latestHeatSnapshot !== null) {
+            heatHud?.render(latestHeatSnapshot, options.snapshot);
+          }
+
+          if (options.events.some((event) => event.type === "run.outcome.restart.requested")) {
+            requestCachedRestart(null);
+          }
+        }) ?? (() => {});
       const initialNavigationSnapshot = worldScene.getNavigationSnapshot?.();
 
       if (initialNavigationSnapshot !== undefined) {
@@ -465,39 +520,11 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   }
 
   function handleRestart(): void {
-    if (state.phase !== "world-ready" || state.handoff === null) {
-      return;
-    }
-
-    const request = state.handoff;
-    const cachedWorldLoadData = resolveCachedWorldLoadData();
-
-    if (cachedWorldLoadData === null) {
-      return;
-    }
-
-    state = transitionSessionState(state, { type: "world.restart.requested" });
-    render();
-
-    settlePendingWork(runCachedWorldLoad(request, cachedWorldLoadData, null));
+    requestCachedRestart(null);
   }
 
   function handleReplay(selection: ReplaySelection): void {
-    if (state.phase !== "world-ready" || state.handoff === null) {
-      return;
-    }
-
-    const request = state.handoff;
-    const cachedWorldLoadData = resolveCachedWorldLoadData();
-
-    if (cachedWorldLoadData === null) {
-      return;
-    }
-
-    state = transitionSessionState(state, { type: "world.replay.requested", selection });
-    render();
-
-    settlePendingWork(runCachedWorldLoad(request, cachedWorldLoadData, selection));
+    requestCachedRestart(selection);
   }
 
   function handleSubmit(query: string): void {
@@ -560,6 +587,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
       destroy: () => {
         activeLoadId += 1;
         window.removeEventListener("keydown", handleShellVisibilityShortcut);
+        window.removeEventListener("keydown", handleQuickRestartShortcut);
         disposeWorldScene();
         options.host.innerHTML = "";
       }
