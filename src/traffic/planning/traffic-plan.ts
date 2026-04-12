@@ -1,4 +1,5 @@
 import { collectRoadPlacementCandidates, selectSpacedRoadPlacements } from "../../world/chunks/road-placement";
+import type { TrafficDensity } from "../../app/config/settings-schema";
 import type {
   SliceBounds,
   SliceChunk,
@@ -13,12 +14,17 @@ import type {
 export interface CreateTrafficPlanOptions {
   bounds: SliceBounds;
   chunks: SliceChunk[];
+  density: TrafficDensity;
   roads: SliceRoad[];
   spawnCandidate: SpawnCandidate;
 }
 
 const HIJACKABLE_SLOT_RATIOS = [0.2, 0.5, 0.8] as const;
-const TRAFFIC_SLOT_RATIOS = [0.35, 0.65] as const;
+const TRAFFIC_SLOT_RATIOS_BY_DENSITY = {
+  low: [0.35],
+  medium: [0.35, 0.65],
+  high: [0.1, 0.35, 0.65, 0.9]
+} as const;
 const ROAD_BOUNDS_PADDING = 10;
 const MIN_TRAFFIC_SEGMENT_LENGTH = 72;
 const MIN_TRAFFIC_CLEARANCE = 36;
@@ -43,8 +49,22 @@ function createTrafficSpeedScale(index: number): number {
   return speedScales[index % speedScales.length];
 }
 
+function resolveTrafficVehicleLimit(density: TrafficDensity, roadCount: number): number {
+  switch (density) {
+    case "low":
+      return Math.max(1, Math.ceil(roadCount / 2));
+
+    case "high":
+      return Math.min(6, Math.max(4, roadCount * 2));
+
+    case "medium":
+    default:
+      return Math.min(4, Math.max(2, roadCount));
+  }
+}
+
 export function createTrafficPlan(options: CreateTrafficPlanOptions): SliceTrafficPlan {
-  const { bounds, chunks, roads, spawnCandidate } = options;
+  const { bounds, chunks, density, roads, spawnCandidate } = options;
   const reservedSecondaryPlacements = selectSpacedRoadPlacements({
     candidates: collectRoadPlacementCandidates({
       bounds,
@@ -71,10 +91,10 @@ export function createTrafficPlan(options: CreateTrafficPlanOptions): SliceTraff
       minimumSegmentLength: MIN_TRAFFIC_SEGMENT_LENGTH,
       minimumStarterClearance: MIN_TRAFFIC_CLEARANCE,
       roads,
-      slotRatios: TRAFFIC_SLOT_RATIOS,
+      slotRatios: TRAFFIC_SLOT_RATIOS_BY_DENSITY[density],
       starterPosition: spawnCandidate.position
     }),
-    limit: Math.min(4, Math.max(2, roads.length)),
+    limit: resolveTrafficVehicleLimit(density, roads.length),
     minimumSpacing: MIN_TRAFFIC_SPACING,
     reservedPositions: reservedSecondaryPlacements.map((candidate) => candidate.position)
   });

@@ -147,3 +147,52 @@ test("restarts from canvas Backspace but ignores editable Backspace while the pl
     )
     .toBeGreaterThan(1);
 });
+
+test("persists settings across reload and applies density changes on recreated runs", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByTestId("open-settings").click();
+  await page.getByTestId("settings-graphics-preset").selectOption("low");
+  await page.getByTestId("settings-traffic-density").selectOption("low");
+  await page.getByTestId("settings-pedestrian-density").selectOption("off");
+  await page.getByTestId("apply-settings").click();
+
+  const locationInput = page.getByTestId("location-input");
+
+  await locationInput.fill(validLocationAliasQuery);
+  await locationInput.press("Enter");
+
+  const canvas = page.locator("canvas");
+
+  await expect(canvas).toHaveAttribute("data-ready-milestone", "controllable-vehicle", { timeout: 15000 });
+  await expect(canvas).toHaveAttribute("data-settings-graphics-preset", "low");
+  await expect(canvas).toHaveAttribute("data-settings-traffic-density", "low");
+  await expect(canvas).toHaveAttribute("data-settings-pedestrian-density", "off");
+
+  const lowTrafficCount = Number((await canvas.getAttribute("data-traffic-vehicle-count")) ?? "0");
+  const lowPedestrianCount = Number((await canvas.getAttribute("data-pedestrian-count")) ?? "0");
+
+  await page.getByTestId("open-settings").click();
+  await page.getByTestId("settings-graphics-preset").selectOption("high");
+  await page.getByTestId("settings-traffic-density").selectOption("high");
+  await page.getByTestId("settings-pedestrian-density").selectOption("high");
+  await page.getByTestId("apply-settings").click();
+  await page.getByTestId("restart-from-spawn").click();
+
+  await expect(canvas).toHaveAttribute("data-ready-milestone", "controllable-vehicle", { timeout: 15000 });
+  await expect(canvas).toHaveAttribute("data-settings-graphics-preset", "high");
+  await expect(canvas).toHaveAttribute("data-settings-traffic-density", "high");
+  await expect(canvas).toHaveAttribute("data-settings-pedestrian-density", "high");
+
+  const highTrafficCount = Number((await canvas.getAttribute("data-traffic-vehicle-count")) ?? "0");
+  const highPedestrianCount = Number((await canvas.getAttribute("data-pedestrian-count")) ?? "0");
+
+  expect(highTrafficCount).toBeGreaterThan(lowTrafficCount);
+  expect(highPedestrianCount).toBeGreaterThan(lowPedestrianCount);
+
+  await page.reload();
+  await page.getByTestId("open-settings").click();
+  await expect(page.getByTestId("settings-graphics-preset")).toHaveValue("high");
+  await expect(page.getByTestId("settings-traffic-density")).toHaveValue("high");
+  await expect(page.getByTestId("settings-pedestrian-density")).toHaveValue("high");
+});

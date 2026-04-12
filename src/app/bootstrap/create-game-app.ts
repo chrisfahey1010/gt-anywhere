@@ -1,6 +1,12 @@
 import { GameEventBus } from "../events/game-events";
+import { resolveCapabilityDefaultPlayerSettings } from "../config/platform";
 import type { ReplaySelection } from "../config/replay-options";
+import type { PlayerSettings } from "../config/settings-schema";
 import { createLogger, type Logger } from "../logging/logger";
+import {
+  LocalStoragePlayerSettingsRepository,
+  type PlayerSettingsRepository
+} from "../../persistence/settings/local-storage-player-settings-repository";
 import { shouldHandleQuickRestartShortcut } from "./quick-restart-shortcut";
 import {
   createInitialSessionState,
@@ -30,8 +36,10 @@ import type { RunOutcomeSnapshot } from "../../sandbox/reset/run-outcome-runtime
 
 export interface CreateGameAppOptions {
   host: HTMLElement;
+  capabilityDefaults?: PlayerSettings;
   logger?: Logger;
   resolver?: LocationResolver;
+  settingsRepository?: PlayerSettingsRepository;
   eventBus?: GameEventBus;
   sliceGenerator?: WorldSliceGenerator;
   sceneLoader?: WorldSceneLoader;
@@ -115,19 +123,24 @@ interface CachedWorldLoadData {
 export async function createGameApp(options: CreateGameAppOptions): Promise<GameApp> {
   const logger = options.logger ?? createLogger();
   const resolver = options.resolver ?? new LocationResolver();
+  const settingsRepository = options.settingsRepository ?? new LocalStoragePlayerSettingsRepository();
+  const capabilityDefaults = options.capabilityDefaults ?? resolveCapabilityDefaultPlayerSettings();
   const eventBus = options.eventBus ?? new GameEventBus();
   const sliceGenerator = options.sliceGenerator ?? new DefaultWorldSliceGenerator();
   const clock = options.clock ?? (() => new Date().toISOString());
   const now = options.now ?? (() => Date.now());
   const { hudHost, renderHost, shellHost } = createAppHosts(options.host);
   const screen = new LocationEntryScreen({
-    host: shellHost,
-    onSubmit: handleSubmit,
-    onEdit: handleEdit,
-    onReplay: handleReplay,
-    onRestart: handleRestart,
-    onRetry: handleRetry
-  });
+     host: shellHost,
+     onSubmit: handleSubmit,
+     onEdit: handleEdit,
+     onApplySettings: handleApplySettings,
+     onReplay: handleReplay,
+     onRestart: handleRestart,
+     onRetry: handleRetry,
+     onSettingsChange: handleSettingsChange,
+     onToggleSettings: handleToggleSettings
+   });
   const navigationHud = new WorldNavigationHud({ host: hudHost });
   const combatHud = new WorldCombatHud({ host: hudHost });
   let heatHud: WorldHeatHud | null = null;
@@ -135,7 +148,10 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   let latestRunOutcomeSnapshot: RunOutcomeSnapshot | null = null;
   let shellHiddenInWorldReady = false;
 
-  let state = createInitialSessionState();
+  let state = createInitialSessionState({
+    capabilityDefaults,
+    savedSettings: settingsRepository.load()
+  });
   let pendingWork = Promise.resolve();
   let activeLoadId = 0;
   let worldScene: WorldSceneHandle | null = null;
@@ -208,24 +224,26 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   };
 
   const requestCachedRestart = (replaySelection: ReplaySelection | null): void => {
-    if (state.phase !== "world-ready" || state.handoff === null) {
+    if (state.phase !== "world-ready" || state.sessionIdentity === null) {
       return;
     }
 
-    const request = state.handoff;
-    const cachedWorldLoadData = resolveCachedWorldLoadData();
+    persistCurrentSettings();
 
-    if (cachedWorldLoadData === null) {
-      return;
-    }
+    const request = createWorldGenerationRequest(state.sessionIdentity, clock, state.currentSettings);
+    const cachedWorldLoadData = resolveCachedWorldLoadData(request);
 
     state =
       replaySelection === null
-        ? transitionSessionState(state, { type: "world.restart.requested" })
-        : transitionSessionState(state, { type: "world.replay.requested", selection: replaySelection });
+        ? transitionSessionState(state, { type: "world.restart.requested", handoff: request })
+        : transitionSessionState(state, { type: "world.replay.requested", handoff: request, selection: replaySelection });
     render();
 
-    settlePendingWork(runCachedWorldLoad(request, cachedWorldLoadData, replaySelection));
+    settlePendingWork(
+      cachedWorldLoadData === null
+        ? runGeneratedWorldLoad(request, replaySelection)
+        : runCachedWorldLoad(request, cachedWorldLoadData, replaySelection)
+    );
   };
 
   const getSceneLoader = async (): Promise<WorldSceneLoader> => {
@@ -319,6 +337,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
         renderHost,
         manifest,
         replaySelection,
+        settings: request.settings,
         spawnCandidate,
         starterVehicleType: replaySelection?.starterVehicleType
       });
@@ -390,11 +409,27 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     }
   };
 
-  const resolveCachedWorldLoadData = (): CachedWorldLoadData | null => {
-    const manifest =
-      state.sliceManifest ??
-      (state.sessionIdentity === null ? null : sliceGenerator.getStoredManifestByReuseKey?.(state.sessionIdentity.reuseKey) ?? null);
-    const spawnCandidate = state.spawnCandidate ?? manifest?.spawnCandidates[0] ?? null;
+  const resolveCachedWorldLoadData = (request: WorldGenerationRequest): CachedWorldLoadData | null => {
+    const requestMatchesActiveHandoff = state.handoff?.compatibilityKey === request.compatibilityKey;
+    const activeManifest =
+      state.sliceManifest !== null && (state.sliceManifest.sliceId === request.compatibilityKey || requestMatchesActiveHandoff)
+        ? state.sliceManifest
+        : null;
+    const storedManifest = sliceGenerator.getStoredManifest?.(request.compatibilityKey) ?? null;
+    const fallbackManifest =
+      storedManifest ??
+      (state.sessionIdentity === null
+        ? null
+        : (() => {
+            const byReuseKey = sliceGenerator.getStoredManifestByReuseKey?.(state.sessionIdentity.reuseKey) ?? null;
+
+            return byReuseKey && (byReuseKey.sliceId === request.compatibilityKey || requestMatchesActiveHandoff)
+              ? byReuseKey
+              : null;
+          })());
+    const manifest = activeManifest ?? fallbackManifest;
+    const spawnCandidate =
+      manifest === activeManifest ? state.spawnCandidate ?? manifest?.spawnCandidates[0] ?? null : manifest?.spawnCandidates[0] ?? null;
 
     if (manifest === null || spawnCandidate === null) {
       return null;
@@ -506,10 +541,12 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
       return;
     }
 
-    const request = state.handoff;
-    const cachedWorldLoadData = resolveCachedWorldLoadData();
+    persistCurrentSettings();
 
-    state = transitionSessionState(state, { type: "world.retry.requested" });
+    const request = createWorldGenerationRequest(state.handoff.location, clock, state.currentSettings);
+    const cachedWorldLoadData = resolveCachedWorldLoadData(request);
+
+    state = transitionSessionState(state, { type: "world.retry.requested", handoff: request });
     render();
 
     settlePendingWork(
@@ -527,6 +564,53 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     requestCachedRestart(selection);
   }
 
+  function handleToggleSettings(): void {
+    if (
+      state.phase === "location-resolving" ||
+      state.phase === "world-generation-requested" ||
+      state.phase === "world-generating" ||
+      state.phase === "world-restarting" ||
+      state.phase === "world-loading"
+    ) {
+      return;
+    }
+
+    state = transitionSessionState(state, { type: "settings.panel.toggled" });
+    render();
+  }
+
+  function handleSettingsChange(changes: Partial<PlayerSettings>): void {
+    if (
+      state.phase === "location-resolving" ||
+      state.phase === "world-generation-requested" ||
+      state.phase === "world-generating" ||
+      state.phase === "world-restarting" ||
+      state.phase === "world-loading"
+    ) {
+      return;
+    }
+
+    state = transitionSessionState(state, {
+      type: "settings.changed",
+      changes
+    });
+    render();
+  }
+
+  function persistCurrentSettings(): void {
+    if (settingsRepository.save(state.currentSettings)) {
+      state = transitionSessionState(state, {
+        type: "settings.applied",
+        savedSettings: state.currentSettings
+      });
+      render();
+    }
+  }
+
+  function handleApplySettings(): void {
+    persistCurrentSettings();
+  }
+
   function handleSubmit(query: string): void {
     if (
       state.phase === "location-resolving" ||
@@ -537,6 +621,8 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     ) {
       return;
     }
+
+    persistCurrentSettings();
 
     const requestId = activeLoadId + 1;
 
@@ -561,7 +647,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
           return;
         }
 
-        await finishSuccess(createWorldGenerationRequest(result.value, clock));
+        await finishSuccess(createWorldGenerationRequest(result.value, clock, state.currentSettings));
       })
       .catch((error) => {
         if (requestId !== activeLoadId) {
@@ -581,15 +667,15 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   state = transitionSessionState(state, { type: "app.boot.completed" });
   render();
 
-    return {
-      getSnapshot: () => state,
-      whenIdle: () => pendingWork,
-      destroy: () => {
+  return {
+    getSnapshot: () => state,
+    whenIdle: () => pendingWork,
+    destroy: () => {
         activeLoadId += 1;
         window.removeEventListener("keydown", handleShellVisibilityShortcut);
         window.removeEventListener("keydown", handleQuickRestartShortcut);
         disposeWorldScene();
         options.host.innerHTML = "";
       }
-    };
+  };
 }

@@ -1,9 +1,11 @@
 import { createGameApp } from "../../src/app/bootstrap/create-game-app";
 import { GameEventBus } from "../../src/app/events/game-events";
+import type { PlayerSettings } from "../../src/app/config/settings-schema";
 import type { WorldSceneLoader } from "../../src/rendering/scene/create-world-scene";
 import type { WorldNavigationSnapshot } from "../../src/rendering/scene/world-scene-runtime";
 import type { SliceManifest, SpawnCandidate } from "../../src/world/chunks/slice-manifest";
 import type { WorldSliceGenerator } from "../../src/world/generation/world-slice-generator";
+import type { PlayerSettingsRepository } from "../../src/persistence/settings/local-storage-player-settings-repository";
 import { validLocationQuery } from "../fixtures/location-queries";
 
 describe("app bootstrap smoke", () => {
@@ -140,6 +142,87 @@ describe("app bootstrap smoke", () => {
     expect(host.querySelector('[data-testid="world-ready-scene"]')).not.toBeNull();
     expect(readyMilestone).toBe("controllable-vehicle");
     expect(readyCount).toBe(2);
+  });
+
+  it("rehydrates saved settings across app recreation without breaking the ready-to-restart loop", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    let storedSettings: PlayerSettings | null = null;
+    const repository: PlayerSettingsRepository = {
+      load: () => storedSettings,
+      save: (settings) => {
+        storedSettings = settings;
+        return true;
+      }
+    };
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => ({
+        ok: true,
+        manifest,
+        spawnCandidate: manifest.spawnCandidates[0]
+      })
+    };
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost, settings }) => {
+        const canvas = document.createElement("canvas");
+        canvas.dataset.readyMilestone = "controllable-vehicle";
+        canvas.dataset.settingsGraphicsPreset = settings.graphicsPreset;
+        canvas.dataset.settingsWorldSize = settings.worldSize;
+        renderHost.replaceChildren(canvas);
+
+        return {
+          canvas,
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+
+    const firstApp = await createGameApp({
+      host,
+      sceneLoader,
+      settingsRepository: repository,
+      sliceGenerator
+    });
+
+    (host.querySelector('[data-testid="world-size-large"]') as HTMLButtonElement).click();
+    (host.querySelector('[data-testid="open-settings"]') as HTMLButtonElement).click();
+
+    const graphicsPreset = host.querySelector('[data-testid="settings-graphics-preset"]') as HTMLSelectElement;
+
+    graphicsPreset.value = "low";
+    graphicsPreset.dispatchEvent(new Event("change", { bubbles: true }));
+    (host.querySelector('[data-testid="apply-settings"]') as HTMLButtonElement).click();
+
+    firstApp.destroy();
+
+    const secondApp = await createGameApp({
+      host,
+      sceneLoader,
+      settingsRepository: repository,
+      sliceGenerator
+    });
+
+    expect((host.querySelector('[data-testid="world-size-large"]') as HTMLButtonElement).getAttribute("aria-pressed")).toBe("true");
+
+    (host.querySelector('[data-testid="open-settings"]') as HTMLButtonElement).click();
+    expect((host.querySelector('[data-testid="settings-graphics-preset"]') as HTMLSelectElement).value).toBe("low");
+
+    const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await secondApp.whenIdle();
+
+    const canvas = host.querySelector("canvas") as HTMLCanvasElement;
+
+    expect(secondApp.getSnapshot().phase).toBe("world-ready");
+    expect(canvas.dataset.readyMilestone).toBe("controllable-vehicle");
+    expect(canvas.dataset.settingsWorldSize).toBe("large");
+    expect(canvas.dataset.settingsGraphicsPreset).toBe("low");
   });
 
   it("lets the player hide and restore the session setup overlay with H during world-ready", async () => {

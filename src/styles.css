@@ -227,6 +227,71 @@ h1 {
   gap: 12px;
 }
 
+.launch-settings,
+.settings-surface {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(219, 229, 245, 0.42);
+  border: 1px solid rgba(76, 93, 122, 0.12);
+}
+
+.launch-settings__copy,
+.settings-surface__copy {
+  display: grid;
+  gap: 6px;
+}
+
+.launch-settings__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.launch-settings__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.world-size-button {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 14px;
+  cursor: pointer;
+  background: #dbe5f5;
+  color: #1f355f;
+  font-weight: 600;
+}
+
+.world-size-button--selected {
+  background: #1d4ed8;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.settings-surface__grid {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-select {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #c7d0de;
+  border-radius: 14px;
+  padding: 0 14px;
+  background: #ffffff;
+}
+
+.settings-select:focus {
+  outline: 2px solid #4071f4;
+  outline-offset: 2px;
+}
+
 .replay-launcher {
   display: grid;
   gap: 14px;
@@ -367,6 +432,11 @@ h1 {
   }
 
   .action-row {
+    flex-direction: column;
+  }
+
+  .launch-settings__controls,
+  .launch-settings__actions {
     flex-direction: column;
   }
 

@@ -1,4 +1,13 @@
 import type { ReplaySelection } from "../config/replay-options";
+import {
+  parsePartialPlayerSettings,
+  type PlayerSettings
+} from "../config/settings-schema";
+import {
+  resolveBootPlayerSettings,
+  resolveCapabilityDefaultPlayerSettings,
+  resolveInteractivePlayerSettings
+} from "../config/platform";
 import type {
   LocationResolveFailure,
   SessionLocationIdentity,
@@ -26,6 +35,12 @@ export interface SessionState {
   phase: SessionPhase;
   formQuery: string;
   replaySelection: ReplaySelection | null;
+  capabilityDefaults: PlayerSettings;
+  savedSettings: Partial<PlayerSettings> | null;
+  explicitShellSettings: Partial<PlayerSettings>;
+  currentSettings: PlayerSettings;
+  activeWorldSettings: PlayerSettings | null;
+  settingsOpen: boolean;
   sessionIdentity: SessionLocationIdentity | null;
   handoff: WorldGenerationRequest | null;
   sliceManifest: SliceManifest | null;
@@ -35,11 +50,14 @@ export interface SessionState {
 
 export type SessionEvent =
   | { type: "app.boot.completed" }
+  | { type: "settings.panel.toggled" }
+  | { type: "settings.changed"; changes: Partial<PlayerSettings> }
+  | { type: "settings.applied"; savedSettings: PlayerSettings }
   | { type: "location.submit.requested"; query: string }
   | { type: "location.edit.requested" }
-  | { type: "world.restart.requested" }
-  | { type: "world.replay.requested"; selection: ReplaySelection }
-  | { type: "world.retry.requested" }
+  | { type: "world.restart.requested"; handoff?: WorldGenerationRequest }
+  | { type: "world.replay.requested"; handoff?: WorldGenerationRequest; selection: ReplaySelection }
+  | { type: "world.retry.requested"; handoff?: WorldGenerationRequest }
   | {
       type: "location.resolve.succeeded";
       identity: SessionLocationIdentity;
@@ -55,11 +73,39 @@ export type SessionEvent =
   | { type: "world.load.failed"; failure: WorldLoadFailure }
   | { type: "location.resolve.failed"; query: string; failure: LocationResolveFailure };
 
-export function createInitialSessionState(): SessionState {
+export interface CreateInitialSessionStateOptions {
+  capabilityDefaults?: PlayerSettings | null;
+  savedSettings?: Partial<PlayerSettings> | null;
+}
+
+function mergeCurrentSettings(
+  state: Pick<SessionState, "capabilityDefaults" | "explicitShellSettings" | "savedSettings">
+): PlayerSettings {
+  return resolveInteractivePlayerSettings({
+    capabilityDefaults: state.capabilityDefaults,
+    explicitShellSettings: state.explicitShellSettings,
+    savedSettings: state.savedSettings
+  });
+}
+
+export function createInitialSessionState(options: CreateInitialSessionStateOptions = {}): SessionState {
+  const capabilityDefaults = options.capabilityDefaults ?? resolveCapabilityDefaultPlayerSettings();
+  const savedSettings = parsePartialPlayerSettings(options.savedSettings);
+  const currentSettings = resolveBootPlayerSettings({
+    capabilityDefaults,
+    savedSettings
+  });
+
   return {
     phase: "boot",
     formQuery: "",
     replaySelection: null,
+    capabilityDefaults,
+    savedSettings,
+    explicitShellSettings: {},
+    currentSettings,
+    activeWorldSettings: null,
+    settingsOpen: false,
     sessionIdentity: null,
     handoff: null,
     sliceManifest: null,
@@ -77,12 +123,52 @@ export function transitionSessionState(state: SessionState, event: SessionEvent)
         error: null
       };
 
+    case "settings.panel.toggled":
+      return {
+        ...state,
+        settingsOpen: !state.settingsOpen
+      };
+
+    case "settings.changed": {
+      const explicitShellSettings = {
+        ...state.explicitShellSettings,
+        ...parsePartialPlayerSettings(event.changes)
+      };
+
+      return {
+        ...state,
+        explicitShellSettings,
+        currentSettings: mergeCurrentSettings({
+          capabilityDefaults: state.capabilityDefaults,
+          explicitShellSettings,
+          savedSettings: state.savedSettings
+        })
+      };
+    }
+
+    case "settings.applied": {
+      const savedSettings = parsePartialPlayerSettings(event.savedSettings);
+
+      return {
+        ...state,
+        savedSettings,
+        explicitShellSettings: {},
+        currentSettings: resolveBootPlayerSettings({
+          capabilityDefaults: state.capabilityDefaults,
+          savedSettings
+        }),
+        settingsOpen: false
+      };
+    }
+
     case "location.submit.requested":
       return {
         ...state,
         phase: "location-resolving",
+        activeWorldSettings: null,
         formQuery: normalizeLocationQuery(event.query),
         replaySelection: null,
+        settingsOpen: false,
         handoff: null,
         sliceManifest: null,
         spawnCandidate: null,
@@ -123,6 +209,7 @@ export function transitionSessionState(state: SessionState, event: SessionEvent)
       return {
         ...state,
         phase: "world-ready",
+        activeWorldSettings: state.currentSettings,
         error: null
       };
 
@@ -130,6 +217,7 @@ export function transitionSessionState(state: SessionState, event: SessionEvent)
       return {
         ...state,
         phase: "world-load-error",
+        settingsOpen: false,
         formQuery: event.failure.placeName,
         error: event.failure
       };
@@ -142,7 +230,9 @@ export function transitionSessionState(state: SessionState, event: SessionEvent)
       return {
         ...state,
         phase: "world-restarting",
+        handoff: event.handoff ?? state.handoff,
         replaySelection: null,
+        settingsOpen: false,
         error: null
       };
 
@@ -154,7 +244,9 @@ export function transitionSessionState(state: SessionState, event: SessionEvent)
       return {
         ...state,
         phase: "world-restarting",
+        handoff: event.handoff ?? state.handoff,
         replaySelection: event.selection,
+        settingsOpen: false,
         error: null
       };
 
@@ -162,6 +254,7 @@ export function transitionSessionState(state: SessionState, event: SessionEvent)
       return {
         ...state,
         phase: "error",
+        settingsOpen: false,
         formQuery: normalizeLocationQuery(event.query),
         error: event.failure
       };
@@ -170,6 +263,8 @@ export function transitionSessionState(state: SessionState, event: SessionEvent)
       return {
         ...state,
         phase: "location-select",
+        activeWorldSettings: null,
+        settingsOpen: false,
         replaySelection: null,
         sessionIdentity: null,
         handoff: null,
@@ -181,7 +276,9 @@ export function transitionSessionState(state: SessionState, event: SessionEvent)
     case "world.retry.requested":
       return {
         ...state,
+        handoff: event.handoff ?? state.handoff,
         phase: state.sliceManifest !== null && state.spawnCandidate !== null ? "world-loading" : "world-generating",
+        settingsOpen: false,
         error: null
       };
 

@@ -1,4 +1,12 @@
 import {
+  HARD_FALLBACK_PLAYER_SETTINGS,
+  splitGenerationPlayerSettings,
+  splitRuntimePlayerSettings,
+  type GenerationPlayerSettings,
+  type PlayerSettings,
+  type RuntimePlayerSettings
+} from "../../app/config/settings-schema";
+import {
   RECOVERABLE_UNRESOLVABLE_QUERIES,
   SESSION_SEED,
   SUPPORTED_LOCATION_ALIASES,
@@ -33,6 +41,10 @@ export interface WorldGenerationRequest {
   requestedAt: string;
   sliceSeed: string;
   location: SessionLocationIdentity;
+  settings: PlayerSettings;
+  generationSettings: GenerationPlayerSettings;
+  runtimeSettings: RuntimePlayerSettings;
+  compatibilityKey: string;
   pipeline: readonly string[];
 }
 
@@ -165,13 +177,34 @@ export class LocationResolver {
 
 export function createWorldGenerationRequest(
   identity: SessionLocationIdentity,
-  clock: () => string = () => new Date().toISOString()
+  clock: () => string = () => new Date().toISOString(),
+  settings: PlayerSettings = HARD_FALLBACK_PLAYER_SETTINGS
 ): WorldGenerationRequest {
+  const generationSettings = splitGenerationPlayerSettings(settings);
+
   return {
     stage: "requested",
     requestedAt: clock(),
     sliceSeed: SESSION_SEED,
     location: identity,
+    settings: { ...settings },
+    generationSettings,
+    runtimeSettings: splitRuntimePlayerSettings(settings),
+    compatibilityKey: createWorldGenerationCompatibilityKey(identity.reuseKey, SESSION_SEED, generationSettings),
     pipeline: [...WORLD_GENERATION_PIPELINE]
   };
+}
+
+export function createWorldGenerationCompatibilityKey(
+  reuseKey: string,
+  sliceSeed: string,
+  generationSettings: GenerationPlayerSettings
+): string {
+  return [
+    reuseKey,
+    sliceSeed,
+    `world-${generationSettings.worldSize}`,
+    `traffic-${generationSettings.trafficDensity}`,
+    `pedestrians-${generationSettings.pedestrianDensity}`
+  ].join("-");
 }

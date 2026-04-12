@@ -8,6 +8,7 @@ import type {
   SliceTrafficPlan,
   SpawnCandidate
 } from "../chunks/slice-manifest";
+import type { WorldSize } from "../../app/config/settings-schema";
 import { createPedestrianPlan } from "../../pedestrians/planning/pedestrian-plan";
 import { createTrafficPlan } from "../../traffic/planning/traffic-plan";
 import { createBreakablePropPlan } from "../planning/breakable-prop-plan";
@@ -19,6 +20,12 @@ import { applyRoadDisplayNames } from "./road-display-name";
 interface StoredGeoDataPreset extends GeoDataPreset {
   reuseKey: string;
 }
+
+const WORLD_SIZE_SCALE: Record<WorldSize, number> = {
+  small: 0.75,
+  medium: 1,
+  large: 1.25
+};
 
 export interface GeoDataPreset {
   presetId: string;
@@ -133,14 +140,58 @@ async function runLocationResolver(request: WorldGenerationRequest): Promise<Ses
 }
 
 async function runGeoDataFetcher(
-  identity: SessionLocationIdentity,
+  request: WorldGenerationRequest,
   source: GeoDataPresetSource
 ): Promise<GeoDataPreset> {
-  return (await source.fetch(identity.reuseKey)) ?? createFallbackPreset(identity);
+  const preset = (await source.fetch(request.location.reuseKey)) ?? createFallbackPreset(request.location);
+
+  return scalePresetForWorldSize(preset, request.generationSettings.worldSize);
 }
 
 function runSliceBoundaryPlanner(preset: GeoDataPreset): SliceBounds {
   return preset.bounds;
+}
+
+function scaleBounds(bounds: SliceBounds, scale: number): SliceBounds {
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerZ = (bounds.minZ + bounds.maxZ) / 2;
+  const halfWidth = ((bounds.maxX - bounds.minX) / 2) * scale;
+  const halfDepth = ((bounds.maxZ - bounds.minZ) / 2) * scale;
+
+  return {
+    minX: centerX - halfWidth,
+    maxX: centerX + halfWidth,
+    minZ: centerZ - halfDepth,
+    maxZ: centerZ + halfDepth
+  };
+}
+
+function scalePointAroundBoundsCenter(point: SliceRoad["points"][number], bounds: SliceBounds, scale: number): SliceRoad["points"][number] {
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerZ = (bounds.minZ + bounds.maxZ) / 2;
+
+  return {
+    x: centerX + (point.x - centerX) * scale,
+    y: point.y,
+    z: centerZ + (point.z - centerZ) * scale
+  };
+}
+
+function scalePresetForWorldSize(preset: GeoDataPreset, worldSize: WorldSize): GeoDataPreset {
+  const scale = WORLD_SIZE_SCALE[worldSize];
+
+  if (scale === 1) {
+    return preset;
+  }
+
+  return {
+    ...preset,
+    bounds: scaleBounds(preset.bounds, scale),
+    roads: preset.roads.map((road) => ({
+      ...road,
+      points: road.points.map((point) => scalePointAroundBoundsCenter(point, preset.bounds, scale))
+    }))
+  };
 }
 
 function runRoadNormalizer(bounds: SliceBounds, preset: GeoDataPreset): SliceRoad[] {
@@ -294,7 +345,7 @@ function createSliceManifest(
   generationVersion: string
 ): SliceManifest {
   return {
-    sliceId: `${request.location.reuseKey}-${request.sliceSeed}`,
+    sliceId: request.compatibilityKey,
     generationVersion,
     location: {
       placeName: request.location.placeName,
@@ -381,16 +432,23 @@ export class DefaultWorldSliceGenerator implements WorldSliceGenerator {
   async generate(request: WorldGenerationRequest): Promise<WorldSliceGenerationResult> {
     try {
       const identity = await runLocationResolver(request);
-      const preset = await runGeoDataFetcher(identity, this.geoDataPresetSource);
+      const preset = await runGeoDataFetcher(request, this.geoDataPresetSource);
       const bounds = runSliceBoundaryPlanner(preset);
       const roads = applyRoadDisplayNames(runPlayabilityPassPipeline(bounds, runRoadNormalizer(bounds, preset)));
       const chunks = runChunkAssembler(bounds, roads);
       const spawnCandidates = runSpawnPlanner(chunks, roads);
       const primarySpawnCandidate = spawnCandidates[0] ?? createFallbackSpawnCandidate(chunks, roads);
-      const traffic = createTrafficPlan({ bounds, chunks, roads, spawnCandidate: primarySpawnCandidate });
+      const traffic = createTrafficPlan({
+        bounds,
+        chunks,
+        density: request.generationSettings.trafficDensity,
+        roads,
+        spawnCandidate: primarySpawnCandidate
+      });
       const pedestrians = createPedestrianPlan({
         bounds,
         chunks,
+        density: request.generationSettings.pedestrianDensity,
         roads,
         spawnCandidate: primarySpawnCandidate,
         traffic
@@ -398,8 +456,10 @@ export class DefaultWorldSliceGenerator implements WorldSliceGenerator {
       const breakableProps = createBreakablePropPlan({
         bounds,
         chunks,
+        pedestrianDensity: request.generationSettings.pedestrianDensity,
         roads,
         spawnCandidate: primarySpawnCandidate,
+        trafficDensity: request.generationSettings.trafficDensity,
         traffic,
         pedestrians
       });

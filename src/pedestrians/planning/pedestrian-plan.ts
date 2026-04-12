@@ -1,4 +1,5 @@
 import { collectRoadPlacementCandidates, selectSpacedRoadPlacements } from "../../world/chunks/road-placement";
+import type { PedestrianDensity } from "../../app/config/settings-schema";
 import type {
   PedestrianInitialState,
   SliceBounds,
@@ -13,6 +14,7 @@ import type {
 export interface CreatePedestrianPlanOptions {
   bounds: SliceBounds;
   chunks: SliceChunk[];
+  density: PedestrianDensity;
   roads: SliceRoad[];
   spawnCandidate: SpawnCandidate;
   traffic: SliceTrafficPlan;
@@ -31,7 +33,12 @@ interface PedestrianPlacementCandidate {
 }
 
 const HIJACKABLE_SLOT_RATIOS = [0.2, 0.5, 0.8] as const;
-const PEDESTRIAN_SLOT_RATIOS = [0.2, 0.5, 0.8] as const;
+const PEDESTRIAN_SLOT_RATIOS_BY_DENSITY = {
+  off: [],
+  low: [0.5],
+  medium: [0.2, 0.5, 0.8],
+  high: [0.15, 0.35, 0.6, 0.85]
+} as const;
 const BOUNDS_PADDING = 12;
 const ROAD_BOUNDS_PADDING = 10;
 const MIN_HIJACKABLE_SEGMENT_LENGTH = 40;
@@ -72,6 +79,23 @@ function createPedestrianCandidateKey(candidate: {
   return `${candidate.roadId}:${candidate.segmentIndex}:${candidate.slotIndex}`;
 }
 
+function resolvePedestrianLimit(density: PedestrianDensity, roadCount: number): number {
+  switch (density) {
+    case "off":
+      return 0;
+
+    case "low":
+      return Math.max(1, roadCount);
+
+    case "high":
+      return Math.min(10, Math.max(5, roadCount * 3));
+
+    case "medium":
+    default:
+      return Math.min(MAX_PEDESTRIAN_COUNT, Math.max(3, roadCount * 2));
+  }
+}
+
 function collectReservedHijackablePositions(options: {
   bounds: SliceBounds;
   chunks: SliceChunk[];
@@ -102,11 +126,16 @@ function collectReservedHijackablePositions(options: {
 function createRoadsideCandidates(options: {
   bounds: SliceBounds;
   chunks: SliceChunk[];
+  density: PedestrianDensity;
   roads: SliceRoad[];
   spawnCandidate: SpawnCandidate;
 }): PedestrianPlacementCandidate[] {
-  const { bounds, chunks, roads, spawnCandidate } = options;
+  const { bounds, chunks, density, roads, spawnCandidate } = options;
   const roadsById = new Map(roads.map((road) => [road.id, road]));
+
+  if (density === "off") {
+    return [];
+  }
 
   return collectRoadPlacementCandidates({
     bounds,
@@ -117,7 +146,7 @@ function createRoadsideCandidates(options: {
     minimumSegmentLength: MIN_PEDESTRIAN_SEGMENT_LENGTH,
     minimumStarterClearance: MIN_PEDESTRIAN_CLEARANCE,
     roads,
-    slotRatios: PEDESTRIAN_SLOT_RATIOS,
+    slotRatios: PEDESTRIAN_SLOT_RATIOS_BY_DENSITY[density],
     starterPosition: spawnCandidate.position
   }).flatMap((candidate) => {
     const road = roadsById.get(candidate.roadId);
@@ -145,9 +174,9 @@ function createRoadsideCandidates(options: {
 }
 
 export function createPedestrianPlan(options: CreatePedestrianPlanOptions): SlicePedestrianPlan {
-  const { bounds, chunks, roads, spawnCandidate, traffic } = options;
+  const { bounds, chunks, density, roads, spawnCandidate, traffic } = options;
   const candidateMap = new Map<string, PedestrianPlacementCandidate>();
-  const roadsideCandidates = createRoadsideCandidates({ bounds, chunks, roads, spawnCandidate });
+  const roadsideCandidates = createRoadsideCandidates({ bounds, chunks, density, roads, spawnCandidate });
 
   roadsideCandidates.forEach((candidate) => {
     candidateMap.set(createPedestrianCandidateKey(candidate), candidate);
@@ -155,7 +184,7 @@ export function createPedestrianPlan(options: CreatePedestrianPlanOptions): Slic
 
   const selectedCandidates = selectSpacedRoadPlacements({
     candidates: roadsideCandidates,
-    limit: Math.min(MAX_PEDESTRIAN_COUNT, Math.max(3, roads.length * 2)),
+    limit: resolvePedestrianLimit(density, roads.length),
     minimumSpacing: MIN_PEDESTRIAN_SPACING,
     reservedPositions: [
       spawnCandidate.position,

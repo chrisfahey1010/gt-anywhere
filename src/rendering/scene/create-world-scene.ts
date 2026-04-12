@@ -83,6 +83,7 @@ import {
   type ReplaySelection,
   type ReplayStarterVehicleType
 } from "../../app/config/replay-options";
+import type { GraphicsPreset, PlayerSettings } from "../../app/config/settings-schema";
 import type { HeatEvent, HeatRuntimeSnapshot } from "../../sandbox/heat/heat-runtime";
 import {
   createRunOutcomeRuntime,
@@ -93,10 +94,38 @@ import {
 const AVAILABLE_VEHICLE_TYPES = REPLAY_VEHICLE_TYPES;
 const DEFAULT_VEHICLE_TYPE = AVAILABLE_VEHICLE_TYPES[0];
 
+const SCENE_GRAPHICS_PRESET_PROFILES = {
+  low: {
+    graphicsPreset: "low",
+    hardwareScalingLevel: 1.5,
+    lightIntensity: 0.82
+  },
+  medium: {
+    graphicsPreset: "medium",
+    hardwareScalingLevel: 1.25,
+    lightIntensity: 0.95
+  },
+  high: {
+    graphicsPreset: "high",
+    hardwareScalingLevel: 1,
+    lightIntensity: 1.05
+  }
+} as const;
+
+export interface SceneGraphicsPresetProfile {
+  graphicsPreset: GraphicsPreset;
+  hardwareScalingLevel: number;
+  lightIntensity: number;
+}
+
 export function resolveSceneStarterVehicleType(
   starterVehicleType?: ReplayStarterVehicleType | null
 ): ReplayStarterVehicleType {
   return starterVehicleType ?? DEFAULT_VEHICLE_TYPE;
+}
+
+export function resolveSceneGraphicsPresetProfile(graphicsPreset: GraphicsPreset): SceneGraphicsPresetProfile {
+  return { ...SCENE_GRAPHICS_PRESET_PROFILES[graphicsPreset] };
 }
 
 export interface WorldSceneHandle {
@@ -115,6 +144,7 @@ export interface CreateWorldSceneOptions {
   renderHost: HTMLElement;
   manifest: SliceManifest;
   replaySelection?: ReplaySelection | null;
+  settings: PlayerSettings;
   spawnCandidate: SpawnCandidate;
   starterVehicleType?: ReplayStarterVehicleType;
 }
@@ -307,8 +337,9 @@ function createHijackableSpawnCandidate(
 
 export class BabylonWorldSceneLoader implements WorldSceneLoader {
   async load(options: CreateWorldSceneOptions): Promise<WorldSceneHandle> {
-    const { renderHost, manifest, spawnCandidate, starterVehicleType } = options;
+    const { renderHost, manifest, settings, spawnCandidate, starterVehicleType } = options;
     const initialStarterVehicleType = resolveSceneStarterVehicleType(starterVehicleType);
+    const graphicsProfile = resolveSceneGraphicsPresetProfile(settings.graphicsPreset);
     const canvas = document.createElement("canvas");
     canvas.className = "world-canvas";
     canvas.setAttribute("aria-label", `${manifest.location.placeName} world view`);
@@ -316,6 +347,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     renderHost.replaceChildren(canvas);
 
     const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+    engine.setHardwareScalingLevel(graphicsProfile.hardwareScalingLevel);
     const scene = new Scene(engine);
     scene.clearColor = Color4.FromHexString("#a7d8ff");
     let physicsAggregates: PhysicsAggregate[] = [];
@@ -336,7 +368,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     const depth = manifest.bounds.maxZ - manifest.bounds.minZ;
 
     const light = new HemisphericLight("slice-light", new Vector3(0.1, 1, 0.1), scene);
-    light.intensity = 0.95;
+    light.intensity = graphicsProfile.lightIntensity;
 
     const groundMaterial = new StandardMaterial("slice-ground-material", scene);
     groundMaterial.diffuseColor = Color3.FromHexString(manifest.sceneMetadata.groundColor);
@@ -892,6 +924,10 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
 
       if (scene.metadata && typeof scene.metadata === "object") {
         Object.assign(scene.metadata, {
+          settingsGraphicsPreset: settings.graphicsPreset,
+          settingsPedestrianDensity: settings.pedestrianDensity,
+          settingsTrafficDensity: settings.trafficDensity,
+          settingsWorldSize: settings.worldSize,
           runOutcome: runOutcomeSnapshot.outcome,
           runOutcomePhase: runOutcomeSnapshot.phase,
           responderVehicleCount: responderVehicles.length,
@@ -903,6 +939,10 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
 
       canvas.dataset.runOutcome = runOutcomeSnapshot.outcome ?? "none";
       canvas.dataset.runOutcomePhase = runOutcomeSnapshot.phase;
+      canvas.dataset.settingsGraphicsPreset = settings.graphicsPreset;
+      canvas.dataset.settingsPedestrianDensity = settings.pedestrianDensity;
+      canvas.dataset.settingsTrafficDensity = settings.trafficDensity;
+      canvas.dataset.settingsWorldSize = settings.worldSize;
       canvas.dataset.responderVehicleCount = String(responderVehicles.length);
       canvas.dataset.trafficVehicleCount = String(trafficVehicles.length);
       applyPedestrianSceneTelemetry({
@@ -994,6 +1034,12 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       staticSurfaceRootName: staticSurfaceRoot.name,
       chunkRootNames: chunkRoots.map((chunkRoot) => chunkRoot.name),
       physicsReady: scene.isPhysicsEnabled(),
+      graphicsHardwareScalingLevel: graphicsProfile.hardwareScalingLevel,
+      graphicsLightIntensity: graphicsProfile.lightIntensity,
+      settingsGraphicsPreset: settings.graphicsPreset,
+      settingsPedestrianDensity: settings.pedestrianDensity,
+      settingsTrafficDensity: settings.trafficDensity,
+      settingsWorldSize: settings.worldSize,
       starterVehicleId: vehicleManager.getActiveVehicle().mesh.name,
       availableVehicleTypes: [...AVAILABLE_VEHICLE_TYPES],
       activeVehicleType: vehicleManager.getActiveVehicle().vehicleType,
@@ -1012,6 +1058,10 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     };
     canvas.dataset.readyMilestone = "controllable-vehicle";
     canvas.dataset.activeCamera = camera.name;
+    canvas.dataset.settingsGraphicsPreset = settings.graphicsPreset;
+    canvas.dataset.settingsPedestrianDensity = settings.pedestrianDensity;
+    canvas.dataset.settingsTrafficDensity = settings.trafficDensity;
+    canvas.dataset.settingsWorldSize = settings.worldSize;
     canvas.dataset.hijackableVehicleCount = String(hijackableVehicles.length);
     canvas.dataset.spawnRoadId = spawnCandidate.roadId;
     canvas.dataset.spawnChunkId = spawnCandidate.chunkId;

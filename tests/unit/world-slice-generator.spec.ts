@@ -23,6 +23,13 @@ import {
 
 describe("world slice generator", () => {
   async function createRequest(query: string): Promise<WorldGenerationRequest> {
+    return createRequestWithSettings(query);
+  }
+
+  async function createRequestWithSettings(
+    query: string,
+    settings: Parameters<typeof createWorldGenerationRequest>[2] = undefined
+  ): Promise<WorldGenerationRequest> {
     const resolver = new LocationResolver();
     const result = await resolver.resolve(query);
 
@@ -30,7 +37,7 @@ describe("world slice generator", () => {
       throw new Error(`Expected '${query}' to resolve successfully.`);
     }
 
-    return createWorldGenerationRequest(result.value, () => "2026-04-07T00:00:00.000Z");
+    return createWorldGenerationRequest(result.value, () => "2026-04-07T00:00:00.000Z", settings);
   }
 
   function createPresetSource(): GeoDataPresetSource {
@@ -508,6 +515,89 @@ describe("world slice generator", () => {
     expect(breakableProps.length).toBeLessThanOrEqual(8);
     expect(new Set(breakableProps.map((prop) => prop.id)).size).toBe(breakableProps.length);
     expect(firstResult.manifest.breakableProps).toEqual(secondResult.manifest.breakableProps);
+  });
+
+  it("scales world bounds and slice identity when world size changes", async () => {
+    const generator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: createPresetSource(),
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const smallRequest = await createRequestWithSettings(validLocationAliasQuery, {
+      worldSize: "small",
+      graphicsPreset: "medium",
+      trafficDensity: "medium",
+      pedestrianDensity: "medium"
+    });
+    const mediumRequest = await createRequestWithSettings(validLocationAliasQuery, {
+      worldSize: "medium",
+      graphicsPreset: "medium",
+      trafficDensity: "medium",
+      pedestrianDensity: "medium"
+    });
+    const largeRequest = await createRequestWithSettings(validLocationAliasQuery, {
+      worldSize: "large",
+      graphicsPreset: "medium",
+      trafficDensity: "medium",
+      pedestrianDensity: "medium"
+    });
+    const smallResult = await generator.generate(smallRequest);
+    const mediumResult = await generator.generate(mediumRequest);
+    const largeResult = await generator.generate(largeRequest);
+
+    expect(smallResult.ok).toBe(true);
+    expect(mediumResult.ok).toBe(true);
+    expect(largeResult.ok).toBe(true);
+
+    if (!smallResult.ok || !mediumResult.ok || !largeResult.ok) {
+      return;
+    }
+
+    const smallWidth = smallResult.manifest.bounds.maxX - smallResult.manifest.bounds.minX;
+    const mediumWidth = mediumResult.manifest.bounds.maxX - mediumResult.manifest.bounds.minX;
+    const largeWidth = largeResult.manifest.bounds.maxX - largeResult.manifest.bounds.minX;
+
+    expect(smallWidth).toBeLessThan(mediumWidth);
+    expect(largeWidth).toBeGreaterThan(mediumWidth);
+    expect(smallResult.manifest.sliceId).not.toBe(mediumResult.manifest.sliceId);
+    expect(largeResult.manifest.sliceId).not.toBe(mediumResult.manifest.sliceId);
+  });
+
+  it("changes planned ambient counts when density settings change", async () => {
+    const generator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: createPresetSource(),
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const lowDensityRequest = await createRequestWithSettings(validLocationAliasQuery, {
+      worldSize: "medium",
+      graphicsPreset: "medium",
+      trafficDensity: "low",
+      pedestrianDensity: "off"
+    });
+    const highDensityRequest = await createRequestWithSettings(validLocationAliasQuery, {
+      worldSize: "medium",
+      graphicsPreset: "medium",
+      trafficDensity: "high",
+      pedestrianDensity: "high"
+    });
+    const lowDensityResult = await generator.generate(lowDensityRequest);
+    const highDensityResult = await generator.generate(highDensityRequest);
+
+    expect(lowDensityResult.ok).toBe(true);
+    expect(highDensityResult.ok).toBe(true);
+
+    if (!lowDensityResult.ok || !highDensityResult.ok) {
+      return;
+    }
+
+    expect(lowDensityResult.manifest.traffic?.vehicles.length ?? 0).toBeLessThan(
+      highDensityResult.manifest.traffic?.vehicles.length ?? 0
+    );
+    expect(lowDensityResult.manifest.pedestrians?.pedestrians.length ?? 0).toBeLessThan(
+      highDensityResult.manifest.pedestrians?.pedestrians.length ?? 0
+    );
+    expect(highDensityResult.manifest.breakableProps?.props.length ?? 0).toBeGreaterThanOrEqual(
+      lowDensityResult.manifest.breakableProps?.props.length ?? 0
+    );
   });
 
   it("keeps generated breakable props clear of the starter spawn, slice edges, traffic starts, pedestrians, and hijackable vehicle placements", async () => {

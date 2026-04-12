@@ -4,15 +4,30 @@ import {
   REPLAY_VEHICLE_OPTIONS,
   type ReplaySelection
 } from "../../app/config/replay-options";
+import {
+  GRAPHICS_PRESET_OPTIONS,
+  PEDESTRIAN_DENSITY_OPTIONS,
+  TRAFFIC_DENSITY_OPTIONS,
+  WORLD_SIZE_OPTIONS,
+  arePlayerSettingsEqual,
+  type GraphicsPreset,
+  type PedestrianDensity,
+  type PlayerSettings,
+  type TrafficDensity,
+  type WorldSize
+} from "../../app/config/settings-schema";
 import type { SessionState } from "../../app/state/session-state-machine";
 
 interface LocationEntryScreenOptions {
   host: HTMLElement;
+  onApplySettings(): void;
   onSubmit(query: string): void;
   onEdit(): void;
   onReplay(selection: ReplaySelection): void;
   onRestart(): void;
   onRetry(): void;
+  onSettingsChange(changes: Partial<PlayerSettings>): void;
+  onToggleSettings(): void;
 }
 
 function escapeHtml(value: string): string {
@@ -41,8 +56,42 @@ function renderReplayButtons(options: typeof REPLAY_VEHICLE_OPTIONS | typeof REP
     .join("");
 }
 
+function renderSelectOptions<T extends string>(options: readonly T[], selected: T): string {
+  return options
+    .map(
+      (option) => `<option value="${option}" ${option === selected ? "selected" : ""}>${formatSettingLabel(option)}</option>`
+    )
+    .join("");
+}
+
+function formatSettingLabel(value: string): string {
+  return value
+    .split("-")
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ");
+}
+
+function renderWorldSizeButtons(selected: WorldSize, disabled: boolean): string {
+  return WORLD_SIZE_OPTIONS.map(
+    (option) => `
+      <button
+        class="world-size-button ${option === selected ? "world-size-button--selected" : ""}"
+        type="button"
+        data-testid="world-size-${option}"
+        data-world-size="${option}"
+        aria-pressed="${option === selected}"
+        ${disabled ? "disabled" : ""}
+      >
+        ${escapeHtml(formatSettingLabel(option))}
+      </button>
+    `
+  ).join("");
+}
+
 export class LocationEntryScreen {
   private readonly host: HTMLElement;
+
+  private readonly onApplySettings: () => void;
 
   private readonly onSubmit: (query: string) => void;
 
@@ -54,13 +103,20 @@ export class LocationEntryScreen {
 
   private readonly onRetry: () => void;
 
+  private readonly onSettingsChange: (changes: Partial<PlayerSettings>) => void;
+
+  private readonly onToggleSettings: () => void;
+
   constructor(options: LocationEntryScreenOptions) {
     this.host = options.host;
+    this.onApplySettings = options.onApplySettings;
     this.onSubmit = options.onSubmit;
     this.onEdit = options.onEdit;
     this.onReplay = options.onReplay;
     this.onRestart = options.onRestart;
     this.onRetry = options.onRetry;
+    this.onSettingsChange = options.onSettingsChange;
+    this.onToggleSettings = options.onToggleSettings;
   }
 
   render(state: SessionState): void {
@@ -110,6 +166,13 @@ export class LocationEntryScreen {
     const showReplayLauncher = isReady;
     const showRestart = isReady;
     const showRetry = isRecoverableLoadError;
+    const settingsSummary = `World size ${formatSettingLabel(state.currentSettings.worldSize)}. Graphics ${formatSettingLabel(state.currentSettings.graphicsPreset)}. Traffic ${formatSettingLabel(state.currentSettings.trafficDensity)}. Pedestrians ${formatSettingLabel(state.currentSettings.pedestrianDensity)}.`;
+    const settingsApplyCopy =
+      state.activeWorldSettings === null
+        ? "These launch presets apply when you start the next run."
+        : arePlayerSettingsEqual(state.currentSettings, state.activeWorldSettings)
+          ? "These presets are already active for this run. Future changes apply on the next recreated run."
+          : "These edits are queued for the next recreated run.";
 
     this.host.innerHTML = `
       <main class="location-shell ${isReady || isRecoverableLoadError ? "location-shell--overlay" : ""}">
@@ -119,6 +182,52 @@ export class LocationEntryScreen {
             <h1 id="location-shell-title">Enter a real-world location</h1>
             <p class="supporting-copy">Use a city, neighborhood, landmark, or address to start a new session.</p>
           </div>
+          <section class="launch-settings" aria-label="Launch settings">
+            <div class="launch-settings__copy">
+              <p class="eyebrow">Launch Essentials</p>
+              <p class="supporting-copy">Pick a world size up front, then open Settings for graphics and density presets.</p>
+            </div>
+            <div class="launch-settings__controls" data-testid="world-size-controls">
+              ${renderWorldSizeButtons(state.currentSettings.worldSize, disableInput)}
+            </div>
+            <div class="launch-settings__actions">
+              <button class="secondary-action" type="button" data-testid="open-settings" ${disableInput ? "disabled" : ""}>
+                ${state.settingsOpen ? "Hide Settings" : "Settings"}
+              </button>
+            </div>
+            <p class="field-hint" data-testid="settings-summary">${escapeHtml(settingsSummary)}</p>
+          </section>
+          ${state.settingsOpen ? `
+            <section class="settings-surface" data-testid="settings-surface" aria-label="Session settings">
+              <div class="settings-surface__copy">
+                <p class="eyebrow">Settings</p>
+                <p class="supporting-copy">Use preset-only controls for world size, graphics, traffic, and pedestrians.</p>
+              </div>
+              <div class="settings-surface__grid">
+                <label class="field-label" for="settings-world-size">World Size</label>
+                <select id="settings-world-size" class="settings-select" data-testid="settings-world-size" ${disableInput ? "disabled" : ""}>
+                  ${renderSelectOptions(WORLD_SIZE_OPTIONS, state.currentSettings.worldSize)}
+                </select>
+                <label class="field-label" for="settings-graphics-preset">Graphics Preset</label>
+                <select id="settings-graphics-preset" class="settings-select" data-testid="settings-graphics-preset" ${disableInput ? "disabled" : ""}>
+                  ${renderSelectOptions(GRAPHICS_PRESET_OPTIONS, state.currentSettings.graphicsPreset)}
+                </select>
+                <label class="field-label" for="settings-traffic-density">Traffic Density</label>
+                <select id="settings-traffic-density" class="settings-select" data-testid="settings-traffic-density" ${disableInput ? "disabled" : ""}>
+                  ${renderSelectOptions(TRAFFIC_DENSITY_OPTIONS, state.currentSettings.trafficDensity)}
+                </select>
+                <label class="field-label" for="settings-pedestrian-density">Pedestrian Density</label>
+                <select id="settings-pedestrian-density" class="settings-select" data-testid="settings-pedestrian-density" ${disableInput ? "disabled" : ""}>
+                  ${renderSelectOptions(PEDESTRIAN_DENSITY_OPTIONS, state.currentSettings.pedestrianDensity)}
+                </select>
+              </div>
+              <p class="field-hint" data-testid="settings-apply-hint">${escapeHtml(settingsApplyCopy)}</p>
+              <div class="action-row">
+                <button class="primary-action" type="button" data-testid="apply-settings" ${disableInput ? "disabled" : ""}>Apply and save</button>
+                <button class="secondary-action" type="button" data-testid="close-settings" ${disableInput ? "disabled" : ""}>Close</button>
+              </div>
+            </section>
+          ` : ""}
           <form class="location-form">
             <label class="field-label" for="location-query">Location</label>
             <input
@@ -175,9 +284,17 @@ export class LocationEntryScreen {
     const form = this.host.querySelector("form");
     const input = this.host.querySelector("input");
     const editButton = this.host.querySelector('[data-testid="edit-location"]');
+    const openSettingsButton = this.host.querySelector('[data-testid="open-settings"]');
+    const closeSettingsButton = this.host.querySelector('[data-testid="close-settings"]');
+    const applySettingsButton = this.host.querySelector('[data-testid="apply-settings"]');
     const restartButton = this.host.querySelector('[data-testid="restart-from-spawn"]');
     const replayButtons = this.host.querySelectorAll<HTMLButtonElement>("[data-replay-selection-id]");
     const retryButton = this.host.querySelector('[data-testid="retry-load"]');
+    const worldSizeButtons = this.host.querySelectorAll<HTMLButtonElement>("[data-world-size]");
+    const settingsWorldSize = this.host.querySelector('[data-testid="settings-world-size"]');
+    const graphicsPreset = this.host.querySelector('[data-testid="settings-graphics-preset"]');
+    const trafficDensity = this.host.querySelector('[data-testid="settings-traffic-density"]');
+    const pedestrianDensity = this.host.querySelector('[data-testid="settings-pedestrian-density"]');
 
     form?.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -193,8 +310,48 @@ export class LocationEntryScreen {
       this.onEdit();
     });
 
+    openSettingsButton?.addEventListener("click", () => {
+      this.onToggleSettings();
+    });
+
+    closeSettingsButton?.addEventListener("click", () => {
+      this.onToggleSettings();
+    });
+
+    applySettingsButton?.addEventListener("click", () => {
+      this.onApplySettings();
+    });
+
     restartButton?.addEventListener("click", () => {
       this.onRestart();
+    });
+
+    worldSizeButtons.forEach((button) => {
+      const worldSize = button.dataset.worldSize;
+
+      if (!worldSize) {
+        return;
+      }
+
+      button.addEventListener("click", () => {
+        this.onSettingsChange({ worldSize: worldSize as WorldSize });
+      });
+    });
+
+    settingsWorldSize?.addEventListener("change", (event) => {
+      this.onSettingsChange({ worldSize: (event.target as HTMLSelectElement).value as WorldSize });
+    });
+
+    graphicsPreset?.addEventListener("change", (event) => {
+      this.onSettingsChange({ graphicsPreset: (event.target as HTMLSelectElement).value as GraphicsPreset });
+    });
+
+    trafficDensity?.addEventListener("change", (event) => {
+      this.onSettingsChange({ trafficDensity: (event.target as HTMLSelectElement).value as TrafficDensity });
+    });
+
+    pedestrianDensity?.addEventListener("change", (event) => {
+      this.onSettingsChange({ pedestrianDensity: (event.target as HTMLSelectElement).value as PedestrianDensity });
     });
 
     replayButtons.forEach((button) => {
@@ -217,7 +374,9 @@ export class LocationEntryScreen {
       this.onRetry();
     });
 
-    if (input instanceof HTMLInputElement && !disableInput) {
+    if (state.settingsOpen && settingsWorldSize instanceof HTMLSelectElement && !disableInput) {
+      settingsWorldSize.focus();
+    } else if (input instanceof HTMLInputElement && !disableInput) {
       input.focus();
       input.setSelectionRange(input.value.length, input.value.length);
     }
