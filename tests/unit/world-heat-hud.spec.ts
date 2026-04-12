@@ -73,6 +73,9 @@ describe("world heat hud", () => {
     expect(root.textContent).toContain("BUSTED");
     expect(root.textContent).toContain("PROP DAMAGE");
     expect(pips).toHaveLength(3);
+    expect(root.dataset.stage).toBe("high");
+    expect(root.dataset.responderCount).toBe("2");
+    expect(root.classList.contains("world-heat-hud--pressure")).toBe(true);
   });
 
   it("clears and hides itself cleanly outside world-ready visibility", () => {
@@ -101,5 +104,7 @@ describe("world heat hud", () => {
 
     expect(root.hidden).toBe(true);
     expect(root.textContent).not.toContain("WATCH");
+    expect(root.classList.contains("world-heat-hud--pressure")).toBe(false);
+    expect(root.dataset.stage ?? "").toBe("");
   });
 });

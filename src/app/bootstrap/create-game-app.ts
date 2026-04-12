@@ -1,5 +1,6 @@
 import { GameEventBus } from "../events/game-events";
-import { resolveCapabilityDefaultPlayerSettings } from "../config/platform";
+import { createWorldAudioRuntime, type WorldAudioRuntime, type WorldAudioTelemetry } from "../../audio/world-audio-runtime";
+import { readBrowserPlatformSignals, resolveAudioPolishProfile, resolveCapabilityDefaultPlayerSettings } from "../config/platform";
 import type { ReplaySelection } from "../config/replay-options";
 import type { PlayerSettings } from "../config/settings-schema";
 import { createLogger, type Logger } from "../logging/logger";
@@ -31,6 +32,7 @@ import {
 import { DefaultWorldSliceGenerator, type WorldSliceGenerator } from "../../world/generation/world-slice-generator";
 import type { SliceManifest, SpawnCandidate } from "../../world/chunks/slice-manifest";
 import type { WorldSceneHandle, WorldSceneLoader } from "../../rendering/scene/create-world-scene";
+import type { CombatEvent } from "../../sandbox/combat/combat-runtime";
 import type { HeatRuntimeSnapshot } from "../../sandbox/heat/heat-runtime";
 import type { RunOutcomeSnapshot } from "../../sandbox/reset/run-outcome-runtime";
 
@@ -45,6 +47,7 @@ export interface CreateGameAppOptions {
   sliceGenerator?: WorldSliceGenerator;
   sceneLoader?: WorldSceneLoader;
   sceneLoaderFactory?: () => Promise<WorldSceneLoader>;
+  audioRuntime?: WorldAudioRuntime;
   clock?: () => string;
   now?: () => number;
 }
@@ -140,6 +143,31 @@ function createAppHosts(host: HTMLElement): {
   return { hudHost, renderHost, shellHost };
 }
 
+function parseRecentEventTypes(value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return value.split(",").filter((entry) => entry.length > 0);
+}
+
+function getAppendedRecentEventTypes(previous: readonly string[], next: readonly string[]): string[] {
+  const maxOverlap = Math.min(previous.length, next.length);
+
+  for (let overlap = maxOverlap; overlap >= 0; overlap -= 1) {
+    const previousSlice = previous.slice(previous.length - overlap);
+    const nextSlice = next.slice(0, overlap);
+
+    if (previousSlice.length !== nextSlice.length || previousSlice.some((eventType, index) => eventType !== nextSlice[index])) {
+      continue;
+    }
+
+    return next.slice(overlap);
+  }
+
+  return [...next];
+}
+
 interface CachedWorldLoadData {
   manifest: SliceManifest;
   spawnCandidate: SpawnCandidate;
@@ -154,6 +182,8 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   const eventBus = options.eventBus ?? new GameEventBus();
   const sliceGenerator = options.sliceGenerator ?? new DefaultWorldSliceGenerator();
   const sceneLoaderFactory = options.sceneLoaderFactory ?? createDefaultWorldSceneLoader;
+  const audioRuntime = options.audioRuntime ?? createWorldAudioRuntime();
+  const platformSignals = readBrowserPlatformSignals();
   const clock = options.clock ?? (() => new Date().toISOString());
   const now = options.now ?? getDefaultNow;
   const appStartedAtMs = now();
@@ -189,6 +219,10 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   let removeCombatSubscription = (): void => {};
   let removeHeatSubscription = (): void => {};
   let removeRunOutcomeSubscription = (): void => {};
+  let disconnectAudioCanvasObserver = (): void => {};
+  let removeAudioTelemetrySubscription = (): void => {};
+  let activeAudioCanvas: HTMLCanvasElement | null = null;
+  let lastChaosRecentEvents: string[] = [];
 
   const clearLoadTelemetry = (): void => {
     delete renderHost.dataset.worldManifestDurationMs;
@@ -223,6 +257,92 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     heatHud?.setVisible(state.phase === "world-ready");
   };
 
+  const writeAudioTelemetryToCanvas = (telemetry: WorldAudioTelemetry): void => {
+    if (activeAudioCanvas === null) {
+      return;
+    }
+
+    activeAudioCanvas.dataset.audioAmbienceEnabled = String(telemetry.ambienceEnabled);
+    activeAudioCanvas.dataset.audioAvailable = String(telemetry.available);
+    activeAudioCanvas.dataset.audioCueCount = String(telemetry.cueCount);
+    activeAudioCanvas.dataset.audioLastCue = telemetry.lastCue;
+    activeAudioCanvas.dataset.audioMood = telemetry.mood;
+    activeAudioCanvas.dataset.audioProfile = telemetry.profile;
+    activeAudioCanvas.dataset.audioUnlockState = telemetry.unlockState;
+    activeAudioCanvas.dataset.audioVehiclePresence = telemetry.vehiclePresence;
+  };
+
+  const syncAudioWorldStateFromCanvas = (canvas: HTMLCanvasElement, worldReady: boolean): void => {
+    const possessionMode = canvas.dataset.possessionMode;
+
+    audioRuntime.setWorldState({
+      activeVehicleType: canvas.dataset.activeVehicleType ?? null,
+      possessionMode: possessionMode === "vehicle" || possessionMode === "on-foot" ? possessionMode : null,
+      worldReady
+    });
+    writeAudioTelemetryToCanvas(audioRuntime.getTelemetry());
+  };
+
+  const observeAudioCanvas = (canvas: HTMLCanvasElement): void => {
+    disconnectAudioCanvasObserver();
+    activeAudioCanvas = canvas;
+    lastChaosRecentEvents = parseRecentEventTypes(canvas.dataset.chaosRecentEvents);
+    syncAudioWorldStateFromCanvas(canvas, state.phase === "world-ready");
+
+    if (typeof MutationObserver !== "function") {
+      return;
+    }
+
+    const observer = new MutationObserver((mutations) => {
+      let shouldSyncWorldState = false;
+
+      mutations.forEach((mutation) => {
+        if (mutation.type !== "attributes" || mutation.attributeName === null) {
+          return;
+        }
+
+        if (mutation.attributeName === "data-chaos-recent-events") {
+          const nextRecentEvents = parseRecentEventTypes(canvas.dataset.chaosRecentEvents);
+          const appendedEventTypes = getAppendedRecentEventTypes(lastChaosRecentEvents, nextRecentEvents);
+
+          lastChaosRecentEvents = nextRecentEvents;
+
+          if (appendedEventTypes.length > 0) {
+            combatHud.processImpactEventTypes(appendedEventTypes);
+            audioRuntime.handleChaosEventTypes(appendedEventTypes);
+          }
+
+          return;
+        }
+
+        if (mutation.attributeName === "data-active-vehicle-type" || mutation.attributeName === "data-possession-mode") {
+          shouldSyncWorldState = true;
+        }
+      });
+
+      if (shouldSyncWorldState) {
+        syncAudioWorldStateFromCanvas(canvas, state.phase === "world-ready");
+        return;
+      }
+
+      writeAudioTelemetryToCanvas(audioRuntime.getTelemetry());
+    });
+
+    observer.observe(canvas, {
+      attributeFilter: ["data-active-vehicle-type", "data-chaos-recent-events", "data-possession-mode"],
+      attributes: true
+    });
+
+    disconnectAudioCanvasObserver = (): void => {
+      observer.disconnect();
+      disconnectAudioCanvasObserver = (): void => {};
+    };
+  };
+
+  removeAudioTelemetrySubscription = audioRuntime.onTelemetryChanged((telemetry) => {
+    writeAudioTelemetryToCanvas(telemetry);
+  });
+
   const handleShellVisibilityShortcut = (event: KeyboardEvent): void => {
     if (event.code !== "KeyH" || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat) {
       return;
@@ -238,6 +358,13 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   };
 
   window.addEventListener("keydown", handleShellVisibilityShortcut);
+
+  const handleAudioUnlockGesture = (): void => {
+    void audioRuntime.unlock();
+  };
+
+  window.addEventListener("keydown", handleAudioUnlockGesture);
+  window.addEventListener("pointerdown", handleAudioUnlockGesture);
 
   const handleQuickRestartShortcut = (event: KeyboardEvent): void => {
     if (!shouldHandleQuickRestartShortcut({ event, phase: state.phase })) {
@@ -262,14 +389,19 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     removeCombatSubscription();
     removeHeatSubscription();
     removeRunOutcomeSubscription();
+    disconnectAudioCanvasObserver();
     removeNavigationSubscription = (): void => {};
     removeCombatSubscription = (): void => {};
     removeHeatSubscription = (): void => {};
     removeRunOutcomeSubscription = (): void => {};
+    activeAudioCanvas = null;
+    lastChaosRecentEvents = [];
     navigationHud.clear();
+    combatHud.clear();
     heatHud?.clear();
     latestHeatSnapshot = null;
     latestRunOutcomeSnapshot = null;
+    audioRuntime.resetWorld();
     worldScene?.dispose();
     worldScene = null;
     renderHost.innerHTML = "";
@@ -408,6 +540,8 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
         spawnCandidate,
         starterVehicleType: replaySelection?.starterVehicleType
       });
+      audioRuntime.setPolishProfile(resolveAudioPolishProfile(request.settings.graphicsPreset, platformSignals.browserFamily));
+      observeAudioCanvas(worldScene.canvas);
 
       removeNavigationSubscription =
         worldScene.subscribeNavigation?.((snapshot) => {
@@ -415,6 +549,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
         }) ?? (() => {});
       removeCombatSubscription =
         worldScene.subscribeCombat?.((options) => {
+          audioRuntime.handleCombatEvents(options.events as CombatEvent[]);
           combatHud.updateWeapon(options.activeWeaponId as any);
           combatHud.processEvents(options.events);
         }) ?? (() => {});
@@ -422,6 +557,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
         heatHud ??= new WorldHeatHud({ host: hudHost });
         removeHeatSubscription =
           worldScene.subscribeHeat((options) => {
+            audioRuntime.handleHeat(options);
             latestHeatSnapshot = options.snapshot;
             heatHud?.render(options.snapshot, latestRunOutcomeSnapshot);
           }) ?? (() => {});
@@ -468,6 +604,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
       renderHost.dataset.worldSceneReadyAtMs = formatTelemetryMs(completedAtMs - appStartedAtMs);
       renderHost.dataset.worldSceneDurationMs = formatTelemetryMs(readyDurationMs);
 
+      syncAudioWorldStateFromCanvas(worldScene.canvas, true);
       state = transitionSessionState(state, { type: "world.scene.ready" });
       render();
     } catch (error) {
@@ -747,9 +884,13 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     whenIdle: () => pendingWork,
     destroy: () => {
         activeLoadId += 1;
+        removeAudioTelemetrySubscription();
+        window.removeEventListener("pointerdown", handleAudioUnlockGesture);
         window.removeEventListener("keydown", handleShellVisibilityShortcut);
+        window.removeEventListener("keydown", handleAudioUnlockGesture);
         window.removeEventListener("keydown", handleQuickRestartShortcut);
         disposeWorldScene();
+        audioRuntime.dispose();
         options.host.innerHTML = "";
       }
   };

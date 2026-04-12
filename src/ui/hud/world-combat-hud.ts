@@ -10,6 +10,7 @@ export class WorldCombatHud {
   private readonly weaponLabel: HTMLDivElement;
   private readonly flashOverlay: HTMLDivElement;
 
+  private impactTimeout: number | null = null;
   private isVisible = false;
   private activeWeaponId: CombatWeaponId | null = null;
   private hitMarkerTimeout: number | null = null;
@@ -18,6 +19,9 @@ export class WorldCombatHud {
   constructor(options: WorldCombatHudOptions) {
     this.root = document.createElement("div");
     this.root.className = "world-combat-hud";
+    this.root.dataset.testid = "world-combat-hud";
+    this.root.setAttribute("aria-hidden", "true");
+    this.root.style.pointerEvents = "none";
     this.root.hidden = true;
 
     this.flashOverlay = document.createElement("div");
@@ -45,6 +49,29 @@ export class WorldCombatHud {
     }
   }
 
+  clear(): void {
+    if (this.flashTimeout !== null) {
+      window.clearTimeout(this.flashTimeout);
+      this.flashTimeout = null;
+    }
+
+    if (this.hitMarkerTimeout !== null) {
+      window.clearTimeout(this.hitMarkerTimeout);
+      this.hitMarkerTimeout = null;
+    }
+
+    if (this.impactTimeout !== null) {
+      window.clearTimeout(this.impactTimeout);
+      this.impactTimeout = null;
+    }
+
+    this.activeWeaponId = null;
+    this.weaponLabel.textContent = "";
+    this.crosshair.classList.remove("world-combat-hud__crosshair--hit");
+    this.flashOverlay.classList.remove("world-combat-hud__flash--active");
+    this.root.classList.remove("world-combat-hud--impact");
+  }
+
   triggerFire(): void {
     this.flashOverlay.classList.remove("world-combat-hud__flash--active");
     // force reflow
@@ -70,6 +97,18 @@ export class WorldCombatHud {
     }, 150);
   }
 
+  triggerImpact(): void {
+    this.root.classList.add("world-combat-hud--impact");
+
+    if (this.impactTimeout !== null) {
+      window.clearTimeout(this.impactTimeout);
+    }
+
+    this.impactTimeout = window.setTimeout(() => {
+      this.root.classList.remove("world-combat-hud--impact");
+    }, 180);
+  }
+
   processEvents(events: readonly CombatEvent[]): void {
     let fired = false;
     let hit = false;
@@ -79,5 +118,11 @@ export class WorldCombatHud {
     }
     if (fired) this.triggerFire();
     if (hit) this.triggerHit();
+  }
+
+  processImpactEventTypes(eventTypes: readonly string[]): void {
+    if (eventTypes.some((eventType) => eventType === "prop.broken" || eventType === "vehicle.damaged")) {
+      this.triggerImpact();
+    }
   }
 }

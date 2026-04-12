@@ -130,6 +130,10 @@ export class WorldHeatHud {
 
   clear(): void {
     this.hasSnapshot = false;
+    delete this.root.dataset.pursuitPhase;
+    delete this.root.dataset.responderCount;
+    delete this.root.dataset.stage;
+    this.root.classList.remove("world-heat-hud--critical", "world-heat-hud--pressure");
     this.stageLabel.textContent = "";
     this.scoreLabel.textContent = "";
     this.phaseLabel.textContent = "";
@@ -146,6 +150,11 @@ export class WorldHeatHud {
     const latestEvent = snapshot.recentEvents[snapshot.recentEvents.length - 1] ?? null;
 
     this.hasSnapshot = true;
+    this.root.dataset.pursuitPhase = snapshot.pursuitPhase;
+    this.root.dataset.responderCount = String(snapshot.responderCount);
+    this.root.dataset.stage = snapshot.stage;
+    this.root.classList.toggle("world-heat-hud--pressure", snapshot.pursuitPhase !== "none" || snapshot.responderCount > 0);
+    this.root.classList.toggle("world-heat-hud--critical", snapshot.stage === "high" || snapshot.stage === "critical");
     this.stageLabel.textContent = snapshot.stage.toUpperCase();
     this.scoreLabel.textContent = `${snapshot.score}/${snapshot.maxScore}`;
     this.phaseLabel.textContent = `${formatPursuitPhaseLabel(snapshot.pursuitPhase)} • ${formatEscapePhaseLabel(snapshot.escapePhase)}`;

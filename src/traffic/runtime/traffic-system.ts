@@ -1,6 +1,7 @@
 import { Vector3, type Scene, type TransformNode } from "@babylonjs/core";
 import type { PlayerVehicleController } from "../../vehicles/controllers/player-vehicle-controller";
 import { loadTuningProfile, type VehicleTuning } from "../../vehicles/physics/vehicle-factory";
+import { resolveSceneVisualPalette } from "../../world/chunks/scene-visual-palette";
 import type { SliceManifest, SpawnCandidate, TrafficVehicleDirection, TrafficVehiclePlan } from "../../world/chunks/slice-manifest";
 import { planTrafficVehicleControls } from "../agents/traffic-driving";
 import { createTrafficRoute, sampleTrafficRoutePoint, type TrafficRoute } from "../routing/traffic-route";
@@ -169,6 +170,7 @@ export async function createTrafficSystem(options: CreateTrafficSystemOptions): 
   const trafficPlans = options.manifest.traffic?.vehicles ?? [];
   const vehicleStates: TrafficSystemVehicleState[] = [];
   const tuningByVehicleType = new Map<string, VehicleTuning>();
+  const visualPalette = resolveSceneVisualPalette(options.manifest.sceneMetadata);
 
   try {
     const uniqueVehicleTypes = [...new Set(trafficPlans.map((plan) => plan.vehicleType))];
@@ -194,14 +196,17 @@ export async function createTrafficSystem(options: CreateTrafficSystemOptions): 
         throw new Error(`Missing tuning profile for traffic vehicle type '${plan.vehicleType}'.`);
       }
 
-      const runtime = spawnTrafficVehicle({
-        controller: options.controller,
-        parent: options.parent,
-        plan,
-        scene: options.scene,
-        starterVehicle: options.spawnCandidate.starterVehicle,
-        tuning
-      });
+        const runtime = spawnTrafficVehicle({
+          controller: options.controller,
+          parent: options.parent,
+          plan,
+          scene: options.scene,
+          starterVehicle: options.spawnCandidate.starterVehicle,
+          tuning,
+          visualPalette: {
+            vehicleAccentColor: visualPalette.vehicleAccentColor
+          }
+        });
 
       vehicleStates.push({
         direction: plan.direction,

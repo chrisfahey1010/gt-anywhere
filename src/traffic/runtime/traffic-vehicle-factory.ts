@@ -1,5 +1,5 @@
 import { Vector3, type Scene, type TransformNode } from "@babylonjs/core";
-import type { TrafficVehiclePlan, SpawnCandidate } from "../../world/chunks/slice-manifest";
+import type { SliceSceneVisualPalette, TrafficVehiclePlan, SpawnCandidate } from "../../world/chunks/slice-manifest";
 import { createPristineVehicleDamageState, type VehicleDamageState } from "../../vehicles/damage/vehicle-damage-policy";
 import type { PlayerVehicleController, VehicleControlState } from "../../vehicles/controllers/player-vehicle-controller";
 import { createVehicleFactory, type VehicleTuning } from "../../vehicles/physics/vehicle-factory";
@@ -38,6 +38,7 @@ export interface CreateTrafficVehicleOptions {
   scene: Scene;
   starterVehicle: SpawnCandidate["starterVehicle"];
   tuning: VehicleTuning;
+  visualPalette?: Pick<SliceSceneVisualPalette, "vehicleAccentColor">;
 }
 
 function createTrafficSpawnCandidate(
@@ -67,7 +68,8 @@ export function createTrafficVehicle(options: CreateTrafficVehicleOptions): Traf
     runtimeName: `traffic-vehicle-${options.plan.id}`,
     scene: options.scene,
     spawnCandidate: createTrafficSpawnCandidate(options.plan, options.starterVehicle),
-    tuning: options.tuning
+    tuning: options.tuning,
+    visualPalette: options.visualPalette
   });
 
   return {

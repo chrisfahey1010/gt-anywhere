@@ -1,6 +1,6 @@
 import { Vector3, type Scene, type TransformNode } from "@babylonjs/core";
 import { createPedestrianActor, createPedestrianStateDuration, type PedestrianActorRuntime, type PedestrianState } from "./pedestrian-factory";
-import type { SlicePedestrianPlan } from "../../world/chunks/slice-manifest";
+import type { SlicePedestrianPlan, SliceSceneVisualPalette } from "../../world/chunks/slice-manifest";
 
 export interface PedestrianThreat {
   id: string;
@@ -43,7 +43,13 @@ export interface CreatePedestrianSystemOptions {
   parent: TransformNode;
   plan: SlicePedestrianPlan;
   scene: Scene;
-  spawnPedestrian?(runtime: { parent: TransformNode; plan: SlicePedestrianPlan["pedestrians"][number]; scene: Scene }): PedestrianActorRuntime;
+  spawnPedestrian?(runtime: {
+    parent: TransformNode;
+    plan: SlicePedestrianPlan["pedestrians"][number];
+    scene: Scene;
+    visualPalette?: Pick<SliceSceneVisualPalette, "pedestrianColor">;
+  }): PedestrianActorRuntime;
+  visualPalette?: Pick<SliceSceneVisualPalette, "pedestrianColor">;
 }
 
 export interface PedestrianSystem {
@@ -143,7 +149,14 @@ function applyPanicMovement(pedestrian: PedestrianActorRuntime, threat: Pedestri
 
 export function createPedestrianSystem(options: CreatePedestrianSystemOptions): PedestrianSystem {
   const spawnPedestrian = options.spawnPedestrian ?? createPedestrianActor;
-  const pedestrians = options.plan.pedestrians.map((plan) => spawnPedestrian({ parent: options.parent, plan, scene: options.scene }));
+  const pedestrians = options.plan.pedestrians.map((plan) =>
+    spawnPedestrian({
+      parent: options.parent,
+      plan,
+      scene: options.scene,
+      visualPalette: options.visualPalette
+    })
+  );
   const combatHitsByPedestrianId = new Map<string, PedestrianCombatHit>();
   const collisionsByPedestrianId = new Map<string, PedestrianCollision>();
   const queuedEvents: PedestrianEvent[] = pedestrians.map((pedestrian) => ({

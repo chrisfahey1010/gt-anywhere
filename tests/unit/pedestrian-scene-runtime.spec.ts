@@ -57,20 +57,72 @@ describe("pedestrian scene runtime", () => {
       scene
     });
 
-    expect(createPedestrianSystem).toHaveBeenCalledWith({
-      parent: root,
-      plan: {
-        pedestrians: [
-          expect.objectContaining({
-            id: "ped-1"
-          })
-        ]
-      },
-      scene
-    });
+    expect(createPedestrianSystem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parent: root,
+        plan: {
+          pedestrians: [
+            expect.objectContaining({
+              id: "ped-1"
+            })
+          ]
+        },
+        scene,
+        visualPalette: {
+          pedestrianColor: "#f4cda6"
+        }
+      })
+    );
 
     disposeScenePedestrianSystem(pedestrianSystem);
     expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the centralized scene palette for pedestrian presentation when available", () => {
+    const pedestrianSystem = createScenePedestrianSystem({
+      manifest: {
+        pedestrians: {
+          pedestrians: [
+            {
+              chunkId: "chunk-0-0",
+              headingDegrees: 0,
+              id: "ped-1",
+              initialState: "standing",
+              offsetFromRoad: 12,
+              position: { x: 0, y: 0, z: 0 },
+              roadId: "market-st",
+              startDistance: 8
+            }
+          ]
+        },
+        sceneMetadata: {
+          boundaryColor: "#8ec5fc",
+          displayName: "San Francisco, CA",
+          districtName: "Downtown",
+          groundColor: "#263238",
+          palette: {
+            pedestrianColor: "#f4cda6"
+          },
+          roadColor: "#f6d365"
+        }
+      },
+      parent: root,
+      scene
+    });
+
+    expect(pedestrianSystem).not.toBeNull();
+
+    if (pedestrianSystem === null) {
+      return;
+    }
+
+    const [pedestrian] = pedestrianSystem.getPedestrians();
+
+    expect(((pedestrian?.mesh.material as unknown as { diffuseColor: { toHexString(): string } }).diffuseColor).toHexString().toLowerCase()).toBe(
+      "#f4cda6"
+    );
+
+    disposeScenePedestrianSystem(pedestrianSystem);
   });
 
   it("updates pedestrians from explicit world actors instead of player controller state", () => {

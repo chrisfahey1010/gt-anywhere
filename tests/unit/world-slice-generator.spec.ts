@@ -159,6 +159,43 @@ describe("world slice generator", () => {
     expect(generator.getStoredManifestByReuseKey?.("san-francisco-ca")).toEqual(result.manifest);
   });
 
+  it("stores an explicit visual palette inside scene metadata so scene polish can stay centralized", async () => {
+    const generator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: createPresetSource(),
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const request = await createRequest(validLocationAliasQuery);
+    const result = await generator.generate(request);
+
+    expect(result.ok).toBe(true);
+
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.manifest.sceneMetadata).toMatchObject({
+      boundaryColor: "#8ec5fc",
+      displayName: "San Francisco, CA",
+      districtName: "Downtown",
+      groundColor: "#263238",
+      palette: {
+        chunkColor: "#52616b",
+        hazeColor: "#d8ecff",
+        pedestrianColor: "#f4cda6",
+        propColors: {
+          barrier: "#ffb74d",
+          bollard: "#b0bec5",
+          hydrant: "#ef5350",
+          "short-post": "#90a4ae",
+          signpost: "#f6d365"
+        },
+        skyColor: "#9fd4ff",
+        vehicleAccentColor: "#f0dfbf"
+      },
+      roadColor: "#f6d365"
+    });
+  });
+
   it("aligns the starter spawn heading to the selected road segment instead of using a fixed fallback", async () => {
     const generator = new DefaultWorldSliceGenerator({
       geoDataPresetSource: createPresetSource(),

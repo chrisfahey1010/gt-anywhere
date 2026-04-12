@@ -7,6 +7,7 @@ import {
 } from "../../src/app/config/settings-schema";
 import {
   resolveBootPlayerSettings,
+  resolveAudioPolishProfile,
   resolveCapabilityDefaultPlayerSettings,
   resolveInteractivePlayerSettings
 } from "../../src/app/config/platform";
@@ -101,6 +102,27 @@ describe("player settings", () => {
       graphicsPreset: "medium",
       trafficDensity: "medium",
       pedestrianDensity: "medium"
+    });
+  });
+
+  it("scales audio polish through graphics preset and browser-family defaults without adding a new settings surface", () => {
+    expect(resolveAudioPolishProfile("low", "chromium")).toEqual({
+      ambienceEnabled: false,
+      cueVolumeScale: 0.75,
+      profile: "low",
+      vehicleHumEnabled: true
+    });
+    expect(resolveAudioPolishProfile("high", "firefox")).toEqual({
+      ambienceEnabled: true,
+      cueVolumeScale: 0.95,
+      profile: "high",
+      vehicleHumEnabled: true
+    });
+    expect(resolveAudioPolishProfile("high", "webkit")).toEqual({
+      ambienceEnabled: false,
+      cueVolumeScale: 0.85,
+      profile: "high",
+      vehicleHumEnabled: true
     });
   });
 

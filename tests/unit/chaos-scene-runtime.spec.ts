@@ -78,6 +78,18 @@ describe("chaos scene runtime", () => {
               startDistance: 18
             }
           ]
+        },
+        sceneMetadata: {
+          boundaryColor: "#8ec5fc",
+          displayName: "San Francisco, CA",
+          districtName: "Downtown",
+          groundColor: "#263238",
+          palette: {
+            propColors: {
+              signpost: "#8fd3ff"
+            }
+          },
+          roadColor: "#f6d365"
         }
       },
       parent: root,
@@ -103,6 +115,7 @@ describe("chaos scene runtime", () => {
       interactionRole: "breakable-prop",
       propType: "signpost"
     });
+    expect(((prop.mesh.material as StandardMaterial).diffuseColor).toHexString().toLowerCase()).toBe("#8fd3ff");
 
     disposeSceneChaosRuntime(runtime);
     expect(prop.mesh.isDisposed()).toBe(true);

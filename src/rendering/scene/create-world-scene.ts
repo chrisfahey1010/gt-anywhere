@@ -15,6 +15,7 @@ import {
   Vector3
 } from "@babylonjs/core";
 import type { SpawnCandidate, SliceManifest, SliceRoad } from "../../world/chunks/slice-manifest";
+import { resolveSceneVisualPalette } from "../../world/chunks/scene-visual-palette";
 import { createOnFootCamera, type OnFootCamera } from "../../sandbox/on-foot/create-on-foot-camera";
 import {
   createPlayerPossessionRuntime,
@@ -130,22 +131,33 @@ function getFrameTimePercentile(sortedFrameTimes: number[], percentile: number):
   return sortedFrameTimes[percentileIndex] ?? 0;
 }
 
-function roundSceneProfileValue(value: number): number {
-  return Math.round(value * 100) / 100;
+function roundSceneProfileValue(value: number, decimals: number = 2): number {
+  const precision = 10 ** decimals;
+
+  return Math.round(value * precision) / precision;
 }
 
 const SCENE_GRAPHICS_PRESET_PROFILES = {
   low: {
+    boundaryAlpha: 0.18,
+    fillLightIntensity: 0.12,
+    fogDensity: 0,
     graphicsPreset: "low",
     hardwareScalingLevel: 1.5,
     lightIntensity: 0.82
   },
   medium: {
+    boundaryAlpha: 0.24,
+    fillLightIntensity: 0.18,
+    fogDensity: 0.0009,
     graphicsPreset: "medium",
     hardwareScalingLevel: 1.25,
     lightIntensity: 0.95
   },
   high: {
+    boundaryAlpha: 0.3,
+    fillLightIntensity: 0.24,
+    fogDensity: 0.0014,
     graphicsPreset: "high",
     hardwareScalingLevel: 1,
     lightIntensity: 1.05
@@ -153,6 +165,9 @@ const SCENE_GRAPHICS_PRESET_PROFILES = {
 } as const;
 
 export interface SceneGraphicsPresetProfile {
+  boundaryAlpha: number;
+  fillLightIntensity: number;
+  fogDensity: number;
   graphicsPreset: GraphicsPreset;
   hardwareScalingLevel: number;
   lightIntensity: number;
@@ -172,6 +187,9 @@ export function resolveSceneGraphicsPresetProfile(
   const browserAdjustment = SCENE_BROWSER_GRAPHICS_ADJUSTMENTS[browserFamily];
 
   return {
+    boundaryAlpha: baseProfile.boundaryAlpha,
+    fillLightIntensity: roundSceneProfileValue(baseProfile.fillLightIntensity * browserAdjustment.lightIntensityMultiplier),
+    fogDensity: roundSceneProfileValue(baseProfile.fogDensity, 4),
     graphicsPreset: baseProfile.graphicsPreset,
     hardwareScalingLevel: roundSceneProfileValue(baseProfile.hardwareScalingLevel * browserAdjustment.hardwareScalingMultiplier),
     lightIntensity: roundSceneProfileValue(baseProfile.lightIntensity * browserAdjustment.lightIntensityMultiplier)
@@ -245,11 +263,11 @@ function buildRoadSegments(
 }
 
 function buildChunkMassing(
-  scene: Scene,
   parent: TransformNode,
   manifest: SliceManifest,
   chunkIndex: number,
-  spawnChunkId: string
+  spawnChunkId: string,
+  material: StandardMaterial
 ): AbstractMesh[] {
   const chunk = manifest.chunks[chunkIndex];
   const buildings: AbstractMesh[] = [];
@@ -257,9 +275,6 @@ function buildChunkMassing(
   if (!chunk || chunk.id === spawnChunkId) {
     return buildings;
   }
-
-  const material = new StandardMaterial(`chunk-massing-material-${chunk.id}`, scene);
-  material.diffuseColor = Color3.FromHexString("#52616b");
 
   for (let buildingIndex = 0; buildingIndex < 3; buildingIndex += 1) {
     const width = 20 + buildingIndex * 10;
@@ -272,7 +287,7 @@ function buildChunkMassing(
         depth,
         height
       },
-      scene
+      material.getScene()
     );
 
     building.position = new Vector3(
@@ -391,6 +406,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     const initialStarterVehicleType = resolveSceneStarterVehicleType(starterVehicleType);
     const platformSignals = readBrowserPlatformSignals();
     const graphicsProfile = resolveSceneGraphicsPresetProfile(settings.graphicsPreset, platformSignals.browserFamily);
+    const visualPalette = resolveSceneVisualPalette(manifest.sceneMetadata);
     const canvas = document.createElement("canvas");
     canvas.className = "world-canvas";
     canvas.setAttribute("aria-label", `${manifest.location.placeName} world view`);
@@ -400,7 +416,10 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
     engine.setHardwareScalingLevel(graphicsProfile.hardwareScalingLevel);
     const scene = new Scene(engine);
-    scene.clearColor = Color4.FromHexString("#a7d8ff");
+    scene.clearColor = Color4.FromHexString(visualPalette.skyColor);
+    scene.fogColor = Color3.FromHexString(visualPalette.hazeColor);
+    scene.fogDensity = graphicsProfile.fogDensity;
+    scene.fogMode = graphicsProfile.fogDensity > 0 ? Scene.FOGMODE_EXP2 : Scene.FOGMODE_NONE;
     let physicsAggregates: PhysicsAggregate[] = [];
     let resize: (() => void) | null = null;
 
@@ -420,16 +439,28 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
 
     const light = new HemisphericLight("slice-light", new Vector3(0.1, 1, 0.1), scene);
     light.intensity = graphicsProfile.lightIntensity;
+    light.groundColor = Color3.FromHexString(visualPalette.groundColor);
+
+    const fillLight = new HemisphericLight("slice-fill-light", new Vector3(-0.4, 0.7, -0.25), scene);
+    fillLight.diffuse = Color3.FromHexString(visualPalette.hazeColor);
+    fillLight.intensity = graphicsProfile.fillLightIntensity;
 
     const groundMaterial = new StandardMaterial("slice-ground-material", scene);
-    groundMaterial.diffuseColor = Color3.FromHexString(manifest.sceneMetadata.groundColor);
+    groundMaterial.diffuseColor = Color3.FromHexString(visualPalette.groundColor);
+    groundMaterial.specularColor = Color3.Black();
 
     const roadMaterial = new StandardMaterial("slice-road-material", scene);
-    roadMaterial.diffuseColor = Color3.FromHexString(manifest.sceneMetadata.roadColor);
+    roadMaterial.diffuseColor = Color3.FromHexString(visualPalette.roadColor);
+    roadMaterial.specularColor = Color3.Black();
 
     const boundaryMaterial = new StandardMaterial("slice-boundary-material", scene);
-    boundaryMaterial.diffuseColor = Color3.FromHexString(manifest.sceneMetadata.boundaryColor);
-    boundaryMaterial.alpha = 0.3;
+    boundaryMaterial.diffuseColor = Color3.FromHexString(visualPalette.boundaryColor);
+    boundaryMaterial.alpha = graphicsProfile.boundaryAlpha;
+    boundaryMaterial.specularColor = Color3.Black();
+
+    const chunkMassingMaterial = new StandardMaterial("chunk-massing-material", scene);
+    chunkMassingMaterial.diffuseColor = Color3.FromHexString(visualPalette.chunkColor);
+    chunkMassingMaterial.specularColor = Color3.Black();
 
     const ground = MeshBuilder.CreateGround(
       "slice-ground",
@@ -480,7 +511,13 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
           walkableSurfaceMeshes.push(...roadSegments);
         });
 
-      const chunkMassing = buildChunkMassing(scene, chunkRoot, manifest, chunkIndex, spawnCandidate.chunkId);
+      const chunkMassing = buildChunkMassing(
+        chunkRoot,
+        manifest,
+        chunkIndex,
+        spawnCandidate.chunkId,
+        chunkMassingMaterial
+      );
       staticPhysicsMeshes.push(...chunkMassing);
       exitBlockingMeshes.push(...chunkMassing);
 
@@ -523,7 +560,10 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
             interactionRole: "active"
           },
           runtimeName: `starter-vehicle-${spawnCandidate.id}`,
-          tuning: defaultTuning
+          tuning: defaultTuning,
+          visualPalette: {
+            vehicleAccentColor: visualPalette.vehicleAccentColor
+          }
         })
       });
 
@@ -537,13 +577,16 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
             parent: worldRoot,
             spawnCandidate,
             controller,
-            metadata: {
-              interactionRole: "active"
-            },
-            runtimeName: `starter-vehicle-${spawnCandidate.id}`,
-            tuning
-        })
-      });
+             metadata: {
+               interactionRole: "active"
+             },
+             runtimeName: `starter-vehicle-${spawnCandidate.id}`,
+             tuning,
+             visualPalette: {
+               vehicleAccentColor: visualPalette.vehicleAccentColor
+             }
+         })
+       });
 
       const hijackableSpawns = createHijackableVehicleSpawns(manifest, spawnCandidate);
       hijackableVehicles = await Promise.all(
@@ -558,13 +601,16 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
               parent: worldRoot,
               spawnCandidate: createHijackableSpawnCandidate(secondarySpawn, spawnCandidate.starterVehicle),
               controller,
-              metadata: {
-                interactionRole: "hijackable"
-              },
-              runtimeName: `hijackable-vehicle-${secondarySpawn.id}`,
-              tuning
-            })
-          });
+               metadata: {
+                 interactionRole: "hijackable"
+               },
+               runtimeName: `hijackable-vehicle-${secondarySpawn.id}`,
+               tuning,
+               visualPalette: {
+                 vehicleAccentColor: visualPalette.vehicleAccentColor
+               }
+             })
+           });
         })
       );
 
@@ -1158,7 +1204,10 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       staticSurfaceRootName: staticSurfaceRoot.name,
       chunkRootNames: chunkRoots.map((chunkRoot) => chunkRoot.name),
       physicsReady: scene.isPhysicsEnabled(),
+      graphicsBoundaryAlpha: graphicsProfile.boundaryAlpha,
       graphicsHardwareScalingLevel: graphicsProfile.hardwareScalingLevel,
+      graphicsFillLightIntensity: graphicsProfile.fillLightIntensity,
+      graphicsFogDensity: graphicsProfile.fogDensity,
       graphicsLightIntensity: graphicsProfile.lightIntensity,
       graphicsBrowserFamily: platformSignals.browserFamily,
       settingsGraphicsPreset: settings.graphicsPreset,
@@ -1177,13 +1226,22 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       responderVehicleIds: responderRuntime.getVehicles().map((vehicle) => vehicle.mesh.name),
       trafficVehicleCount: trafficSystem?.getVehicles().length ?? 0,
       trafficVehicleIds: trafficSystem?.getVehicles().map((vehicle) => vehicle.mesh.name) ?? [],
+      visualPaletteChunkColor: visualPalette.chunkColor,
+      visualPaletteHazeColor: visualPalette.hazeColor,
+      visualPalettePedestrianColor: visualPalette.pedestrianColor,
+      visualPaletteRoadColor: visualPalette.roadColor,
+      visualPaletteSkyColor: visualPalette.skyColor,
+      visualPaletteVehicleAccentColor: visualPalette.vehicleAccentColor,
       readinessMilestone: "controllable-vehicle",
       spawnRoadId: spawnCandidate.roadId,
       spawnChunkId: spawnCandidate.chunkId
     };
     canvas.dataset.readyMilestone = "controllable-vehicle";
     canvas.dataset.activeCamera = camera.name;
+    canvas.dataset.graphicsBoundaryAlpha = graphicsProfile.boundaryAlpha.toFixed(2);
     canvas.dataset.graphicsBrowserFamily = platformSignals.browserFamily;
+    canvas.dataset.graphicsFillLightIntensity = graphicsProfile.fillLightIntensity.toFixed(2);
+    canvas.dataset.graphicsFogDensity = graphicsProfile.fogDensity.toFixed(4);
     canvas.dataset.settingsGraphicsPreset = settings.graphicsPreset;
     canvas.dataset.settingsPedestrianDensity = settings.pedestrianDensity;
     canvas.dataset.settingsTrafficDensity = settings.trafficDensity;
@@ -1192,6 +1250,9 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     canvas.dataset.spawnRoadId = spawnCandidate.roadId;
     canvas.dataset.spawnChunkId = spawnCandidate.chunkId;
     canvas.dataset.starterVehicleId = vehicleManager.getActiveVehicle().mesh.name;
+    canvas.dataset.visualPaletteChunkColor = visualPalette.chunkColor;
+    canvas.dataset.visualPaletteSkyColor = visualPalette.skyColor;
+    canvas.dataset.visualPaletteVehicleAccentColor = visualPalette.vehicleAccentColor;
     syncCanvasTelemetry();
 
     resize = (): void => {

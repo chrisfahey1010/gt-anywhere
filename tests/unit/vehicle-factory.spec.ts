@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Scene, Engine, NullEngine } from '@babylonjs/core';
+import { Color3, Scene, Engine, NullEngine } from '@babylonjs/core';
 import {
   clearVehicleTuningProfileCache,
   createVehicleFactory,
@@ -238,6 +238,60 @@ describe('Vehicle Factory & Tuning Profiles', () => {
       expect(heavyTruck.mesh.getChildMeshes().map((mesh) => mesh.name)).toEqual(
         expect.arrayContaining([expect.stringContaining('cab'), expect.stringContaining('hauler')])
       );
+    });
+
+    it('blends the base vehicle color toward the scene accent without discarding vehicle identity', () => {
+      const spawnCandidate: SpawnCandidate = {
+        id: 'spawn-3',
+        chunkId: 'chunk-0-0',
+        roadId: 'road-0',
+        position: { x: 0, y: 0, z: 0 },
+        headingDegrees: 0,
+        surface: 'road',
+        laneIndex: 0,
+        starterVehicle: {
+          kind: 'starter-car',
+          placement: 'lane-center',
+          dimensions: { width: 1, height: 1, length: 1 }
+        }
+      };
+      const tuning = {
+        name: 'Heavy Truck',
+        mass: 5000,
+        color: '#0000ff',
+        maxForwardSpeed: 12,
+        maxReverseSpeed: 5,
+        maxTurnRate: 1.0,
+        damage: {
+          durability: 180,
+          impactSpeedThreshold: 10
+        },
+        model: { bodyStyle: 'heavy-truck' as const },
+        dimensions: { width: 2.5, height: 3.5, length: 7.0 }
+      };
+      const expectedBaseColor = Color3.Lerp(
+        Color3.FromHexString(tuning.color),
+        Color3.FromHexString('#f0dfbf'),
+        0.2
+      )
+        .toHexString()
+        .toLowerCase();
+
+      const vehicle = createVehicleFactory({
+        scene,
+        parent: null as any,
+        spawnCandidate,
+        controller: mockController,
+        tuning,
+        visualPalette: {
+          vehicleAccentColor: '#f0dfbf'
+        }
+      });
+
+      expect((vehicle.mesh.material as any).diffuseColor.toHexString().toLowerCase()).toBe(expectedBaseColor);
+      expect(vehicle.mesh.metadata).toMatchObject({
+        visualBaseColor: expectedBaseColor
+      });
     });
   });
 });

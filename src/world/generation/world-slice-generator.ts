@@ -8,6 +8,7 @@ import type {
   SliceTrafficPlan,
   SpawnCandidate
 } from "../chunks/slice-manifest";
+import { DEFAULT_SCENE_VISUAL_PALETTE_OVERRIDES } from "../chunks/scene-visual-palette";
 import type { WorldSize } from "../../app/config/settings-schema";
 import { createPedestrianPlan } from "../../pedestrians/planning/pedestrian-plan";
 import { createTrafficPlan } from "../../traffic/planning/traffic-plan";
@@ -365,7 +366,13 @@ function createSliceManifest(
       districtName: preset.districtName,
       roadColor: "#f6d365",
       groundColor: "#263238",
-      boundaryColor: "#8ec5fc"
+      boundaryColor: "#8ec5fc",
+      palette: {
+        ...DEFAULT_SCENE_VISUAL_PALETTE_OVERRIDES,
+        propColors: {
+          ...(DEFAULT_SCENE_VISUAL_PALETTE_OVERRIDES.propColors ?? {})
+        }
+      }
     }
   };
 }

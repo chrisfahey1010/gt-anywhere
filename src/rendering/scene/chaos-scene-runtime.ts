@@ -20,6 +20,7 @@ import {
 } from "../../vehicles/damage/vehicle-damage-system";
 import type { VehicleDamageState } from "../../vehicles/damage/vehicle-damage-policy";
 import type { VehicleTuning } from "../../vehicles/physics/vehicle-factory";
+import { resolveSceneVisualPalette } from "../../world/chunks/scene-visual-palette";
 import type { BreakablePropPlanEntry, BreakablePropType, SliceManifest } from "../../world/chunks/slice-manifest";
 
 export type ChaosSceneEvent = BreakablePropBrokenEvent | VehicleDamageEvent;
@@ -57,7 +58,7 @@ export interface SceneChaosRuntime {
 }
 
 export interface CreateSceneChaosRuntimeOptions {
-  manifest: Pick<SliceManifest, "breakableProps">;
+  manifest: Pick<SliceManifest, "breakableProps"> & { sceneMetadata?: SliceManifest["sceneMetadata"] };
   parent: TransformNode;
   scene: Scene;
 }
@@ -184,7 +185,12 @@ function getPropCollisionRadius(propType: BreakablePropType): number {
   return PROP_VISUALS[propType].collisionRadius;
 }
 
-function createPropMesh(handle: PropVisualHandle, parent: TransformNode, scene: Scene): void {
+function createPropMesh(
+  handle: PropVisualHandle,
+  parent: TransformNode,
+  scene: Scene,
+  propColors: Record<BreakablePropType, string>
+): void {
   const config = PROP_VISUALS[handle.entry.propType];
   const mesh =
     config.kind === "box"
@@ -209,7 +215,7 @@ function createPropMesh(handle: PropVisualHandle, parent: TransformNode, scene: 
 
   const material = new StandardMaterial(`breakable-prop-material-${handle.entry.id}`, scene);
 
-  material.diffuseColor = Color3.FromHexString(config.color);
+  material.diffuseColor = Color3.FromHexString(propColors[handle.entry.propType] ?? config.color);
   mesh.material = material;
   mesh.parent = parent;
   mesh.position.set(handle.entry.position.x, config.height / 2, handle.entry.position.z);
@@ -241,10 +247,17 @@ function applyBrokenPropVisual(handle: PropVisualHandle): void {
 function applyVehicleDamageVisual(actor: SceneChaosVehicleActor): void {
   const normalizedSeverity = actor.damageState.normalizedSeverity;
   const material = actor.mesh.material;
+  const baseColor =
+    actor.mesh.metadata && typeof actor.mesh.metadata.visualBaseColor === "string"
+      ? actor.mesh.metadata.visualBaseColor
+      : actor.tuning.color;
 
   if (material instanceof StandardMaterial) {
-    const baseColor = Color3.FromHexString(actor.tuning.color);
-    material.diffuseColor = Color3.Lerp(baseColor, BROKEN_VEHICLE_COLOR, Math.min(0.65, normalizedSeverity));
+    material.diffuseColor = Color3.Lerp(
+      Color3.FromHexString(baseColor),
+      BROKEN_VEHICLE_COLOR,
+      Math.min(0.65, normalizedSeverity)
+    );
   }
 
   if (actor.mesh.metadata && typeof actor.mesh.metadata === "object") {
@@ -331,6 +344,7 @@ function collectVehiclePropImpacts(runtime: RuntimeState, vehicles: readonly Sce
 export function createSceneChaosRuntime(options: CreateSceneChaosRuntimeOptions): SceneChaosRuntime {
   const plan = options.manifest.breakableProps ?? { props: [] };
   const propVisuals = new Map<string, PropVisualHandle>();
+  const visualPalette = resolveSceneVisualPalette(options.manifest.sceneMetadata);
 
   plan.props.forEach((entry) => {
     const handle = {
@@ -339,7 +353,7 @@ export function createSceneChaosRuntime(options: CreateSceneChaosRuntimeOptions)
       mesh: null as unknown as Mesh
     };
 
-    createPropMesh(handle, options.parent, options.scene);
+    createPropMesh(handle, options.parent, options.scene, visualPalette.propColors);
     propVisuals.set(entry.id, handle);
   });
 

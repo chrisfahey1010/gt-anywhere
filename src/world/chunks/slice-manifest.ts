@@ -56,6 +56,28 @@ export interface SliceSceneMetadata {
   roadColor: string;
   groundColor: string;
   boundaryColor: string;
+  palette?: SliceSceneVisualPaletteOverrides;
+}
+
+export interface SliceSceneVisualPaletteOverrides {
+  chunkColor?: string;
+  hazeColor?: string;
+  pedestrianColor?: string;
+  skyColor?: string;
+  vehicleAccentColor?: string;
+  propColors?: Partial<Record<BreakablePropType, string>>;
+}
+
+export interface SliceSceneVisualPalette {
+  boundaryColor: string;
+  chunkColor: string;
+  groundColor: string;
+  hazeColor: string;
+  pedestrianColor: string;
+  propColors: Record<BreakablePropType, string>;
+  roadColor: string;
+  skyColor: string;
+  vehicleAccentColor: string;
 }
 
 export type TrafficVehicleDirection = "forward" | "reverse";

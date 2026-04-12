@@ -9,6 +9,7 @@ import {
   type PedestrianThreat
 } from "../../pedestrians/runtime/pedestrian-system";
 import type { SliceManifest } from "../../world/chunks/slice-manifest";
+import { resolveSceneVisualPalette } from "../../world/chunks/scene-visual-palette";
 
 export interface ScenePedestrianActor {
   mesh: {
@@ -35,7 +36,7 @@ export interface ScenePedestrianVehicleActor extends ScenePedestrianActor {
 
 export interface CreateScenePedestrianSystemOptions {
   createPedestrianSystem?: (options: CreatePedestrianSystemOptions) => PedestrianSystem;
-  manifest: Pick<SliceManifest, "pedestrians">;
+  manifest: Pick<SliceManifest, "pedestrians"> & { sceneMetadata?: SliceManifest["sceneMetadata"] };
   parent: TransformNode;
   scene: Scene;
 }
@@ -133,16 +134,20 @@ function createVehicleCollisions(
 
 export function createScenePedestrianSystem(options: CreateScenePedestrianSystemOptions): PedestrianSystem | null {
   const plan = options.manifest.pedestrians;
+  const visualPalette = resolveSceneVisualPalette(options.manifest.sceneMetadata);
 
   if (!plan || plan.pedestrians.length === 0) {
     return null;
   }
 
-  return (options.createPedestrianSystem ?? createPedestrianSystem)({
-    parent: options.parent,
-    plan,
-    scene: options.scene
-  });
+    return (options.createPedestrianSystem ?? createPedestrianSystem)({
+      parent: options.parent,
+      plan,
+      scene: options.scene,
+      visualPalette: {
+        pedestrianColor: visualPalette.pedestrianColor
+      }
+    });
 }
 
 export function disposeScenePedestrianSystem(pedestrianSystem: PedestrianSystem | null): void {

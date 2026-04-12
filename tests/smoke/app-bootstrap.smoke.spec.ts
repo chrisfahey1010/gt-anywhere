@@ -1,4 +1,5 @@
 import { createGameApp } from "../../src/app/bootstrap/create-game-app";
+import type { WorldAudioRuntime, WorldAudioTelemetry } from "../../src/audio/world-audio-runtime";
 import { GameEventBus } from "../../src/app/events/game-events";
 import type { PlayerSettings } from "../../src/app/config/settings-schema";
 import type { WorldSceneLoader } from "../../src/rendering/scene/create-world-scene";
@@ -6,6 +7,7 @@ import type { WorldNavigationSnapshot } from "../../src/rendering/scene/world-sc
 import type { SliceManifest, SpawnCandidate } from "../../src/world/chunks/slice-manifest";
 import type { WorldSliceGenerator } from "../../src/world/generation/world-slice-generator";
 import type { PlayerSettingsRepository } from "../../src/persistence/settings/local-storage-player-settings-repository";
+import type { HeatRuntimeSnapshot } from "../../src/sandbox/heat/heat-runtime";
 import { validLocationQuery } from "../fixtures/location-queries";
 
 describe("app bootstrap smoke", () => {
@@ -72,6 +74,24 @@ describe("app bootstrap smoke", () => {
       boundaryColor: "#8ec5fc"
     }
   };
+
+  function createHeatSnapshot(overrides: Partial<HeatRuntimeSnapshot> = {}): HeatRuntimeSnapshot {
+    return {
+      captureTimeRemainingSeconds: null,
+      escapeCooldownRemainingSeconds: 0,
+      escapePhase: "inactive",
+      failSignal: null,
+      level: 0,
+      maxScore: 100,
+      pursuitPhase: "none",
+      recentEvents: [],
+      responderCount: 0,
+      score: 0,
+      stage: "calm",
+      stageThresholds: [0, 8, 24, 48, 72],
+      ...overrides
+    };
+  }
 
   it("boots to the location shell and reaches a slice-ready state on a valid submission", async () => {
     document.body.innerHTML = '<div id="app"></div>';
@@ -293,6 +313,234 @@ describe("app bootstrap smoke", () => {
 
     window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, code: "KeyH" }));
     expect(shellHost.hidden).toBe(false);
+  });
+
+  it("wires audio runtime telemetry through world-ready, canvas updates, and restart cleanup", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const listeners = new Set<(telemetry: WorldAudioTelemetry) => void>();
+    let telemetry: WorldAudioTelemetry = {
+      ambienceEnabled: true,
+      available: true,
+      cueCount: 0,
+      lastCue: "none",
+      mood: "inactive",
+      profile: "medium",
+      unlockState: "uninitialized",
+      vehiclePresence: "none"
+    };
+    const updateTelemetry = (changes: Partial<WorldAudioTelemetry>): void => {
+      telemetry = {
+        ...telemetry,
+        ...changes
+      };
+      listeners.forEach((listener) => {
+        listener(telemetry);
+      });
+    };
+    const audioRuntime: WorldAudioRuntime = {
+      dispose: vi.fn(),
+      getTelemetry: () => telemetry,
+      handleChaosEventTypes: vi.fn((eventTypes: readonly string[]) => {
+        if (eventTypes.length === 0) {
+          return;
+        }
+
+        updateTelemetry({
+          cueCount: telemetry.cueCount + eventTypes.length,
+          lastCue: eventTypes[eventTypes.length - 1] === "vehicle.damaged" ? "impact.vehicle" : "impact.prop"
+        });
+      }),
+      handleCombatEvents: vi.fn(),
+      handleHeat: vi.fn(({ snapshot }: { snapshot: HeatRuntimeSnapshot }) => {
+        updateTelemetry({
+          mood: snapshot.stage
+        });
+      }),
+      onTelemetryChanged: (listener) => {
+        listeners.add(listener);
+
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      resetWorld: vi.fn(() => {
+        updateTelemetry({
+          cueCount: 0,
+          lastCue: "none",
+          mood: "inactive",
+          vehiclePresence: "none"
+        });
+      }),
+      setPolishProfile: vi.fn((profile) => {
+        updateTelemetry({
+          ambienceEnabled: profile.ambienceEnabled,
+          profile: profile.profile
+        });
+      }),
+      setWorldState: vi.fn((state: { activeVehicleType: string | null; possessionMode: "vehicle" | "on-foot" | null; worldReady: boolean }) => {
+        updateTelemetry({
+          vehiclePresence:
+            state.worldReady && state.possessionMode === "vehicle" ? (state.activeVehicleType ?? "vehicle") : "none"
+        });
+      }),
+      unlock: vi.fn(async () => {
+        updateTelemetry({
+          unlockState: "unlocked"
+        });
+      })
+    };
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => ({
+        ok: true,
+        manifest,
+        spawnCandidate: manifest.spawnCandidates[0]
+      })
+    };
+    type TestHeatListener = (options: {
+      events: Array<{
+        nextLevel: number;
+        nextStage: "calm" | "watch" | "elevated" | "high" | "critical";
+        previousLevel: number;
+        previousStage: "calm" | "watch" | "elevated" | "high" | "critical";
+        snapshot: HeatRuntimeSnapshot;
+        timestampSeconds: number;
+        type: "heat.level.changed";
+      }>;
+      snapshot: HeatRuntimeSnapshot;
+    }) => void;
+    let emitHeat: TestHeatListener | null = null;
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost }) => {
+        const canvas = document.createElement("canvas");
+
+        canvas.dataset.activeVehicleType = "sedan";
+        canvas.dataset.chaosRecentEvents = "";
+        canvas.dataset.possessionMode = "vehicle";
+        canvas.dataset.readyMilestone = "controllable-vehicle";
+        renderHost.replaceChildren(canvas);
+
+        return {
+          canvas,
+          subscribeHeat: (listener) => {
+            emitHeat = listener as TestHeatListener;
+            listener({
+              events: [],
+              snapshot: createHeatSnapshot()
+            });
+
+            return () => {
+              emitHeat = null;
+            };
+          },
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+
+    const app = await createGameApp({ host, audioRuntime, sceneLoader, sliceGenerator });
+    const input = host.querySelector("input") as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await app.whenIdle();
+
+    const canvas = host.querySelector("canvas") as HTMLCanvasElement;
+
+    expect(canvas.dataset.audioVehiclePresence).toBe("sedan");
+    expect(canvas.dataset.audioMood).toBe("calm");
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, code: "KeyW" }));
+    expect(canvas.dataset.audioUnlockState).toBe("unlocked");
+
+    expect(emitHeat).not.toBeNull();
+    (emitHeat as unknown as TestHeatListener)({
+      events: [
+        {
+          nextLevel: 2,
+          nextStage: "elevated",
+          previousLevel: 0,
+          previousStage: "calm",
+          snapshot: createHeatSnapshot({ level: 2, responderCount: 1, score: 24, stage: "elevated" }),
+          timestampSeconds: 2,
+          type: "heat.level.changed"
+        }
+      ],
+      snapshot: createHeatSnapshot({ level: 2, responderCount: 1, score: 24, stage: "elevated" })
+    });
+    expect(canvas.dataset.audioMood).toBe("elevated");
+
+    canvas.dataset.chaosRecentEvents = "vehicle.damaged";
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(canvas.dataset.audioCueCount).toBe("1");
+    expect(canvas.dataset.audioLastCue).toBe("impact.vehicle");
+
+    (host.querySelector('[data-testid="restart-from-spawn"]') as HTMLButtonElement).click();
+    await app.whenIdle();
+
+    const restartedCanvas = host.querySelector("canvas") as HTMLCanvasElement;
+
+    expect(restartedCanvas.dataset.audioCueCount).toBe("0");
+    expect(restartedCanvas.dataset.audioMood).toBe("calm");
+    expect(restartedCanvas.dataset.audioVehiclePresence).toBe("sedan");
+    expect(audioRuntime.resetWorld).toHaveBeenCalled();
+  });
+
+  it("reuses chaos telemetry for impact feedback and clears the pulse on restart", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => ({
+        ok: true,
+        manifest,
+        spawnCandidate: manifest.spawnCandidates[0]
+      })
+    };
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost }) => {
+        const canvas = document.createElement("canvas");
+
+        canvas.dataset.chaosRecentEvents = "";
+        canvas.dataset.possessionMode = "vehicle";
+        canvas.dataset.readyMilestone = "controllable-vehicle";
+        renderHost.replaceChildren(canvas);
+
+        return {
+          canvas,
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+
+    const app = await createGameApp({ host, sceneLoader, sliceGenerator });
+    const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await app.whenIdle();
+
+    const canvas = host.querySelector("canvas") as HTMLCanvasElement;
+    const combatHud = host.querySelector('[data-testid="world-combat-hud"]') as HTMLElement;
+
+    canvas.dataset.chaosRecentEvents = "vehicle.damaged";
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(combatHud.classList.contains("world-combat-hud--impact")).toBe(true);
+
+    (host.querySelector('[data-testid="restart-from-spawn"]') as HTMLButtonElement).click();
+    await app.whenIdle();
+
+    expect(combatHud.classList.contains("world-combat-hud--impact")).toBe(false);
   });
 
   it("keeps the controllable-vehicle baseline and possession indicator coherent across restart", async () => {

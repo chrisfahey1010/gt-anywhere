@@ -5,7 +5,8 @@ import {
 } from "../fixtures/location-queries";
 
 test("boots to the location shell and reaches a slice-ready world after a valid submission", async ({
-  page
+  page,
+  browserName
 }) => {
   const requestCounts = new Map<string, number>();
 
@@ -33,6 +34,9 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
 
   await expect(canvas).toBeVisible({ timeout: 15000 });
   await expect(canvas).toHaveAttribute("data-ready-milestone", "controllable-vehicle", { timeout: 15000 });
+  await expect(canvas).toHaveAttribute("data-graphics-fog-density", /\d+\.\d{4}/);
+  await expect(canvas).toHaveAttribute("data-visual-palette-sky-color", /#[0-9a-f]{6}/i);
+  await expect(canvas).toHaveAttribute("data-audio-profile", /low|medium|high/);
   await expect(page.getByTestId("loading-feedback")).toContainText("Slice ready for San Francisco, CA.", {
     timeout: 15000
   });
@@ -67,9 +71,12 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
   expect(initialPresetRequests).toBe(1);
   expect(initialTuningRequests).toBeGreaterThan(0);
 
+  await canvas.click();
+  await expect.poll(async () => await canvas.getAttribute("data-audio-unlock-state")).toMatch(/unlocked|blocked|unsupported/);
+  await expect(canvas).toHaveAttribute("data-audio-vehicle-presence", /none|sedan|sports-car|heavy-truck/);
+
   const startingDistance = Number((await canvas.getAttribute("data-starter-vehicle-distance")) ?? "0");
 
-  await canvas.click();
   await page.keyboard.down("w");
   await expect
     .poll(
@@ -113,6 +120,8 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
     manifestReadyAtMs
   );
   expect(Number((await renderHost.getAttribute("data-world-scene-ready-at-ms")) ?? "0")).toBeGreaterThan(sceneReadyAtMs);
+  await expect(canvas).toHaveAttribute("data-audio-profile", /low|medium|high/);
+  await expect(canvas).toHaveAttribute("data-audio-vehicle-presence", /none|sedan|sports-car|heavy-truck/);
 
   await canvas.click();
   await page.keyboard.down("w");
@@ -207,7 +216,7 @@ test("restarts from canvas Backspace but ignores editable Backspace while the pl
     .toBeGreaterThan(1);
 });
 
-test("persists settings across reload and applies density changes on recreated runs", async ({ page }) => {
+test("persists settings across reload and applies density changes on recreated runs", async ({ page, browserName }) => {
   await page.goto("/");
 
   await page.getByTestId("open-settings").click();
@@ -224,6 +233,9 @@ test("persists settings across reload and applies density changes on recreated r
   const canvas = page.locator("canvas");
 
   await expect(canvas).toHaveAttribute("data-ready-milestone", "controllable-vehicle", { timeout: 15000 });
+  await expect(canvas).toHaveAttribute("data-graphics-fog-density", "0.0000");
+  await expect(canvas).toHaveAttribute("data-audio-profile", "low");
+  await expect(canvas).toHaveAttribute("data-audio-ambience-enabled", "false");
   await expect(canvas).toHaveAttribute("data-settings-graphics-preset", "low");
   await expect(canvas).toHaveAttribute("data-settings-traffic-density", "low");
   await expect(canvas).toHaveAttribute("data-settings-pedestrian-density", "off");
@@ -247,6 +259,12 @@ test("persists settings across reload and applies density changes on recreated r
   await page.getByTestId("restart-from-spawn").click();
 
   await expect(canvas).toHaveAttribute("data-ready-milestone", "controllable-vehicle", { timeout: 15000 });
+  await expect(canvas).toHaveAttribute("data-graphics-fog-density", "0.0014");
+  await expect(canvas).toHaveAttribute("data-audio-profile", "high");
+  await expect(canvas).toHaveAttribute(
+    "data-audio-ambience-enabled",
+    browserName === "webkit" ? "false" : "true"
+  );
   await expect(canvas).toHaveAttribute("data-settings-graphics-preset", "high");
   await expect(canvas).toHaveAttribute("data-settings-traffic-density", "high");
   await expect(canvas).toHaveAttribute("data-settings-pedestrian-density", "high");

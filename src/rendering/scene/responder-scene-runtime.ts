@@ -16,6 +16,7 @@ import {
 import type { PlayerVehicleController } from "../../vehicles/controllers/player-vehicle-controller";
 import { loadTuningProfile, type VehicleTuning } from "../../vehicles/physics/vehicle-factory";
 import type { ManagedVehicleRuntime } from "../../vehicles/physics/vehicle-manager";
+import { resolveSceneVisualPalette } from "../../world/chunks/scene-visual-palette";
 import type { SliceManifest, SliceRoad, SpawnCandidate, TrafficVehiclePlan } from "../../world/chunks/slice-manifest";
 import { resolveCurrentRoad } from "./world-navigation";
 
@@ -196,6 +197,7 @@ export async function createSceneResponderRuntime(
   const loadTuning = options.loadTuningProfile ?? loadTuningProfile;
   const spawnResponderVehicle = options.spawnResponderVehicle ?? createTrafficVehicle;
   const responderTuning = await loadTuning(RESPONDER_VEHICLE_TYPE);
+  const visualPalette = resolveSceneVisualPalette(options.manifest.sceneMetadata);
   const roadsById = new Map(options.manifest.roads.map((road) => [road.id, road]));
   const routeCache = new Map<string, TrafficRoute>();
   const responders: ResponderVehicleState[] = [];
@@ -238,7 +240,10 @@ export async function createSceneResponderRuntime(
       plan,
       scene: options.scene,
       starterVehicle: options.spawnCandidate.starterVehicle,
-      tuning: responderTuning
+      tuning: responderTuning,
+      visualPalette: {
+        vehicleAccentColor: visualPalette.vehicleAccentColor
+      }
     });
 
     syncResponderMetadata(runtime);

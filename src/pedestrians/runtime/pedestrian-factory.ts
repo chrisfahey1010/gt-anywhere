@@ -7,6 +7,7 @@ import {
   type Scene,
   type TransformNode
 } from "@babylonjs/core";
+import type { SliceSceneVisualPalette } from "../../world/chunks/slice-manifest";
 import type { PedestrianInitialState, PedestrianPlanEntry } from "../../world/chunks/slice-manifest";
 
 export type PedestrianState = PedestrianInitialState | "panic" | "struck";
@@ -25,6 +26,7 @@ export interface CreatePedestrianActorOptions {
   parent: TransformNode;
   plan: PedestrianPlanEntry;
   scene: Scene;
+  visualPalette?: Pick<SliceSceneVisualPalette, "pedestrianColor">;
 }
 
 export interface PedestrianActorRuntime {
@@ -64,7 +66,7 @@ export function createPedestrianStateDuration(state: PedestrianInitialState, see
 }
 
 export function createPedestrianActor(options: CreatePedestrianActorOptions): PedestrianActorRuntime {
-  const { parent, plan, scene } = options;
+  const { parent, plan, scene, visualPalette } = options;
   const mesh = MeshBuilder.CreateBox(
     `pedestrian-${plan.id}`,
     {
@@ -81,7 +83,7 @@ export function createPedestrianActor(options: CreatePedestrianActorOptions): Pe
   let calmState: PedestrianInitialState = plan.initialState;
   let currentState: PedestrianState = plan.initialState;
 
-  material.diffuseColor = Color3.FromHexString("#f7c59f");
+  material.diffuseColor = Color3.FromHexString(visualPalette?.pedestrianColor ?? "#f7c59f");
   mesh.parent = parent;
   mesh.material = material;
   mesh.position.copyFrom(anchorPosition);

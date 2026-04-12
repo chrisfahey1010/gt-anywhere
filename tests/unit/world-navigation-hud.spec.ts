@@ -43,4 +43,27 @@ describe("world navigation hud minimap projection", () => {
 
     expect(y2).toBeLessThan(y1);
   });
+
+  it("publishes possession mode as additive HUD state for on-foot styling", () => {
+    const host = document.createElement("div");
+    const hud = new WorldNavigationHud({ host });
+
+    hud.setVisible(true);
+    hud.render({
+      actor: {
+        position: { x: 0, y: 0, z: 0 },
+        facingYaw: 0,
+        possessionMode: "on-foot"
+      },
+      bounds,
+      districtName: "Downtown",
+      locationName: "San Francisco, CA",
+      roads: [],
+      streetLabel: "Market Street"
+    });
+
+    const root = host.querySelector('[data-testid="world-navigation-hud"]') as HTMLElement;
+
+    expect(root.dataset.possessionMode).toBe("on-foot");
+  });
 });

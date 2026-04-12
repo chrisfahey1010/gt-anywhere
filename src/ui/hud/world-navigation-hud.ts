@@ -128,6 +128,7 @@ export class WorldNavigationHud {
 
   clear(): void {
     this.hasSnapshot = false;
+    delete this.root.dataset.possessionMode;
     this.districtLabel.textContent = "";
     this.streetLabel.textContent = "";
     this.locationLabel.textContent = "";
@@ -143,6 +144,7 @@ export class WorldNavigationHud {
     const hasStreetLabel = Boolean(snapshot.streetLabel);
 
     this.hasSnapshot = true;
+    this.root.dataset.possessionMode = snapshot.actor.possessionMode;
     this.districtLabel.textContent = hasStreetLabel ? snapshot.districtName : snapshot.locationName;
     this.streetLabel.textContent = snapshot.streetLabel ?? snapshot.districtName;
     this.locationLabel.textContent = hasStreetLabel ? snapshot.locationName : "";

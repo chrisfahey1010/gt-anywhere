@@ -8,7 +8,7 @@ import {
   TransformNode,
   Vector3
 } from "@babylonjs/core";
-import type { SpawnCandidate } from "../../world/chunks/slice-manifest";
+import type { SliceSceneVisualPalette, SpawnCandidate } from "../../world/chunks/slice-manifest";
 import type { PlayerVehicleController, VehicleControlState } from "../controllers/player-vehicle-controller";
 import type { StarterVehicleRuntime } from "./create-starter-vehicle";
 
@@ -34,16 +34,18 @@ export interface VehicleTuning {
 }
 
 export interface CreateVehicleOptions {
+  controller: PlayerVehicleController;
   metadata?: Record<string, unknown>;
-  scene: Scene;
   parent: TransformNode;
+  scene: Scene;
   runtimeName?: string;
   spawnCandidate: SpawnCandidate;
-  controller: PlayerVehicleController;
   tuning: VehicleTuning;
+  visualPalette?: Pick<SliceSceneVisualPalette, "vehicleAccentColor">;
 }
 
 const FORWARD_AXIS = new Vector3(0, 0, 1);
+const VEHICLE_SCENE_ACCENT_BLEND = 0.2;
 const tuningProfilePromises = new Map<string, Promise<VehicleTuning>>();
 
 function clamp(value: number, min: number, max: number): number {
@@ -80,8 +82,18 @@ export async function loadTuningProfile(vehicleType: string): Promise<VehicleTun
 }
 
 export function createVehicleFactory(options: CreateVehicleOptions): StarterVehicleRuntime {
-  const { controller, metadata, parent, runtimeName, scene, spawnCandidate, tuning } = options;
+  const { controller, metadata, parent, runtimeName, scene, spawnCandidate, tuning, visualPalette } = options;
   const { width, height, length } = tuning.dimensions;
+  const resolvedBaseColor =
+    visualPalette === undefined
+      ? tuning.color
+      : Color3.Lerp(
+          Color3.FromHexString(tuning.color),
+          Color3.FromHexString(visualPalette.vehicleAccentColor),
+          VEHICLE_SCENE_ACCENT_BLEND
+        )
+          .toHexString()
+          .toLowerCase();
 
   const vehicleMesh = MeshBuilder.CreateBox(
     runtimeName ?? `starter-vehicle-${spawnCandidate.id}`,
@@ -101,11 +113,12 @@ export function createVehicleFactory(options: CreateVehicleOptions): StarterVehi
     bodyStyle: tuning.model.bodyStyle,
     runtimeName: vehicleMesh.name,
     tuningName: tuning.name,
-    ...metadata
+    ...metadata,
+    visualBaseColor: resolvedBaseColor
   };
 
   const material = new StandardMaterial(`vehicle-material-${spawnCandidate.id}`, scene);
-  material.diffuseColor = Color3.FromHexString(tuning.color);
+  material.diffuseColor = Color3.FromHexString(resolvedBaseColor);
   vehicleMesh.material = material;
 
   const createVisualPart = (

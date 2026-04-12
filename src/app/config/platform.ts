@@ -1,6 +1,7 @@
 import {
   HARD_FALLBACK_PLAYER_SETTINGS,
   parsePartialPlayerSettings,
+  type GraphicsPreset,
   type PlayerSettings
 } from "./settings-schema";
 
@@ -11,6 +12,13 @@ export interface PlatformSignalSnapshot {
   browserFamily: BrowserFamily;
   hardwareConcurrency: number | null;
   deviceMemoryGiB: number | null;
+}
+
+export interface AudioPolishProfile {
+  ambienceEnabled: boolean;
+  cueVolumeScale: number;
+  profile: GraphicsPreset;
+  vehicleHumEnabled: boolean;
 }
 
 interface ResolvePlayerSettingsOptions {
@@ -128,6 +136,53 @@ function resolveBrowserAdjustedDefaults(baseDefaults: PlayerSettings, browserFam
     case "unknown":
     default:
       return baseDefaults;
+  }
+}
+
+export function resolveAudioPolishProfile(
+  graphicsPreset: GraphicsPreset,
+  browserFamily: BrowserFamily = "unknown"
+): AudioPolishProfile {
+  const baseProfile: AudioPolishProfile =
+    graphicsPreset === "low"
+      ? {
+          ambienceEnabled: false,
+          cueVolumeScale: 0.75,
+          profile: "low",
+          vehicleHumEnabled: true
+        }
+      : graphicsPreset === "medium"
+        ? {
+            ambienceEnabled: true,
+            cueVolumeScale: 0.9,
+            profile: "medium",
+            vehicleHumEnabled: true
+          }
+        : {
+            ambienceEnabled: true,
+            cueVolumeScale: 1,
+            profile: "high",
+            vehicleHumEnabled: true
+          };
+
+  switch (browserFamily) {
+    case "firefox":
+      return {
+        ...baseProfile,
+        cueVolumeScale: Math.round(baseProfile.cueVolumeScale * 0.95 * 100) / 100
+      };
+
+    case "webkit":
+      return {
+        ...baseProfile,
+        ambienceEnabled: false,
+        cueVolumeScale: Math.round(baseProfile.cueVolumeScale * 0.85 * 100) / 100
+      };
+
+    case "chromium":
+    case "unknown":
+    default:
+      return baseProfile;
   }
 }
 
