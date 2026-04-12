@@ -400,19 +400,27 @@ export class FetchGeoDataPresetSource implements GeoDataPresetSource {
       return this.presetsPromise;
     }
 
-    this.presetsPromise = fetch(this.url)
+    const promise = fetch(this.url)
       .then(async (response) => {
         if (!response.ok) {
-          return new Map<string, GeoDataPreset>();
+          throw new Error("Failed to fetch presets");
         }
 
         const records = (await response.json()) as StoredGeoDataPreset[];
 
         return new Map(records.map(({ reuseKey, ...preset }) => [reuseKey, preset]));
       })
-      .catch(() => new Map<string, GeoDataPreset>());
+      .catch(() => {
+        if (this.presetsPromise === promise) {
+          this.presetsPromise = null;
+        }
+        
+        return new Map<string, GeoDataPreset>();
+      });
 
-    return this.presetsPromise;
+    this.presetsPromise = promise;
+
+    return promise;
   }
 }
 
@@ -431,6 +439,17 @@ export class DefaultWorldSliceGenerator implements WorldSliceGenerator {
 
   async generate(request: WorldGenerationRequest): Promise<WorldSliceGenerationResult> {
     try {
+      const storedManifest = this.manifestStore.getBySliceId(request.compatibilityKey);
+
+      if (storedManifest && storedManifest.generationVersion === this.generationVersion) {
+        return {
+          ok: true,
+          manifest: storedManifest,
+          spawnCandidate:
+            storedManifest.spawnCandidates[0] ?? createFallbackSpawnCandidate(storedManifest.chunks, storedManifest.roads)
+        };
+      }
+
       const identity = await runLocationResolver(request);
       const preset = await runGeoDataFetcher(request, this.geoDataPresetSource);
       const bounds = runSliceBoundaryPlanner(preset);

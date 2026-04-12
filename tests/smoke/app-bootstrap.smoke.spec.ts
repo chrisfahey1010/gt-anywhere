@@ -77,6 +77,7 @@ describe("app bootstrap smoke", () => {
     document.body.innerHTML = '<div id="app"></div>';
 
     const host = document.querySelector("#app") as HTMLElement;
+    let currentNow = 100;
     const eventBus = new GameEventBus();
     let readyMilestone: string | null = null;
     let readyCount = 0;
@@ -108,7 +109,22 @@ describe("app bootstrap smoke", () => {
       readyCount += 1;
     });
 
-    const app = await createGameApp({ host, eventBus, sliceGenerator, sceneLoader });
+    const app = await createGameApp({
+      host,
+      eventBus,
+      now: () => {
+        const value = currentNow;
+        currentNow += 25;
+        return value;
+      },
+      sliceGenerator,
+      sceneLoader
+    });
+    const renderHost = host.querySelector('[data-testid="render-host"]') as HTMLDivElement;
+
+    expect(Number(renderHost.dataset.shellReadyAtMs ?? "0")).toBeGreaterThan(0);
+    expect(renderHost.dataset.worldManifestReadyAtMs).toBeUndefined();
+    expect(renderHost.dataset.worldSceneReadyAtMs).toBeUndefined();
 
     expect(host.textContent).toContain("Enter a real-world location");
 
@@ -119,6 +135,9 @@ describe("app bootstrap smoke", () => {
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 
     await app.whenIdle();
+
+    const firstManifestReadyAtMs = Number(renderHost.dataset.worldManifestReadyAtMs ?? "0");
+    const firstSceneReadyAtMs = Number(renderHost.dataset.worldSceneReadyAtMs ?? "0");
 
     expect(app.getSnapshot().phase).toBe("world-ready");
     expect(host.textContent).toContain("Slice ready");
@@ -133,6 +152,10 @@ describe("app bootstrap smoke", () => {
     });
     expect(readyMilestone).toBe("controllable-vehicle");
     expect(readyCount).toBe(1);
+    expect(firstManifestReadyAtMs).toBeGreaterThan(Number(renderHost.dataset.shellReadyAtMs ?? "0"));
+    expect(firstSceneReadyAtMs).toBeGreaterThan(firstManifestReadyAtMs);
+    expect(Number(renderHost.dataset.worldManifestDurationMs ?? "0")).toBeGreaterThan(0);
+    expect(Number(renderHost.dataset.worldSceneDurationMs ?? "0")).toBeGreaterThan(0);
 
     (host.querySelector('[data-testid="restart-from-spawn"]') as HTMLButtonElement).click();
     await app.whenIdle();
@@ -142,6 +165,9 @@ describe("app bootstrap smoke", () => {
     expect(host.querySelector('[data-testid="world-ready-scene"]')).not.toBeNull();
     expect(readyMilestone).toBe("controllable-vehicle");
     expect(readyCount).toBe(2);
+    expect(Number(renderHost.dataset.worldManifestReadyAtMs ?? "0")).toBeGreaterThan(firstManifestReadyAtMs);
+    expect(Number(renderHost.dataset.worldSceneReadyAtMs ?? "0")).toBeGreaterThan(firstSceneReadyAtMs);
+    expect(renderHost.dataset.worldLoadFailedAtMs).toBeUndefined();
   });
 
   it("rehydrates saved settings across app recreation without breaking the ready-to-restart loop", async () => {

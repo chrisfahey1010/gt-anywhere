@@ -44,17 +44,39 @@ export interface CreateVehicleOptions {
 }
 
 const FORWARD_AXIS = new Vector3(0, 0, 1);
+const tuningProfilePromises = new Map<string, Promise<VehicleTuning>>();
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+export function clearVehicleTuningProfileCache(): void {
+  tuningProfilePromises.clear();
+}
+
 export async function loadTuningProfile(vehicleType: string): Promise<VehicleTuning> {
-  const response = await fetch(`/data/tuning/${vehicleType}.json`);
-  if (!response.ok) {
-    throw new Error(`Failed to load tuning profile for ${vehicleType}`);
+  const cachedTuningProfile = tuningProfilePromises.get(vehicleType);
+
+  if (cachedTuningProfile) {
+    return cachedTuningProfile;
   }
-  return response.json();
+
+  const tuningProfilePromise = fetch(`/data/tuning/${vehicleType}.json`)
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`Failed to load tuning profile for ${vehicleType}`);
+      }
+
+      return (await response.json()) as VehicleTuning;
+    })
+    .catch((error) => {
+      tuningProfilePromises.delete(vehicleType);
+      throw error;
+    });
+
+  tuningProfilePromises.set(vehicleType, tuningProfilePromise);
+
+  return tuningProfilePromise;
 }
 
 export function createVehicleFactory(options: CreateVehicleOptions): StarterVehicleRuntime {

@@ -7,6 +7,7 @@ import type { SpawnCandidate, SliceManifest } from "../../world/chunks/slice-man
 import type { WorldLoadFailure } from "../../world/generation/world-load-failure";
 
 export type GameEvent =
+  | { type: "app.shell.ready"; durationMs: number; phase: "location-select" }
   | { type: "session.location.submitted"; query: string }
   | { type: "session.location.resolved"; identity: SessionLocationIdentity }
   | { type: "session.location.resolve-failed"; failure: LocationResolveFailure; query: string }

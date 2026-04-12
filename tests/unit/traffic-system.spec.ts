@@ -320,4 +320,76 @@ describe("traffic system", () => {
     expect(secondRead).toBe(firstRead);
     expect(secondRead[0]).toBe(firstRead[0]);
   });
+
+  it("loads each unique tuning profile once even when multiple traffic plans share the same vehicle type", async () => {
+    const { manifest, spawnCandidate } = createManifest([
+      {
+        chunkId: "chunk-0-0",
+        direction: "forward",
+        headingDegrees: 0,
+        id: "market-st-traffic-0-0",
+        position: { x: 0, y: 0, z: -20 },
+        roadId: "market-st",
+        speedScale: 0.5,
+        startDistance: 20,
+        vehicleType: "sedan"
+      },
+      {
+        chunkId: "chunk-0-0",
+        direction: "forward",
+        headingDegrees: 0,
+        id: "market-st-traffic-0-1",
+        position: { x: 0, y: 0, z: 20 },
+        roadId: "market-st",
+        speedScale: 0.6,
+        startDistance: 40,
+        vehicleType: "sedan"
+      }
+    ]);
+    const loadTuningProfile = vi.fn(async () => createTuning());
+
+    const system = await createTrafficSystem({
+      controller: {
+        bindVehicle: () => {},
+        captureInputFrame: () => {
+          throw new Error("not used in traffic system test");
+        },
+        consumeSwitchVehicleRequest: () => false,
+        dispose: () => {},
+        getState: () => {
+          throw new Error("traffic vehicles must not read player controller state");
+        },
+        unbindVehicle: () => {}
+      },
+      manifest,
+      parent: root,
+      scene,
+      spawnCandidate,
+      spawnTrafficVehicle: vi.fn(({ plan, tuning }) => ({
+        damageState: createPristineVehicleDamageState(),
+        dispose: () => {},
+        id: plan.id,
+        mesh: {
+          getDirection: () => new Vector3(0, 0, 1),
+          name: `traffic-vehicle-${plan.id}`,
+          position: new Vector3(plan.position.x, 1.7, plan.position.z),
+          rotation: { y: 0 }
+        },
+        physicsAggregate: {
+          body: {
+            getLinearVelocity: () => Vector3.Zero()
+          }
+        },
+        tuning,
+        vehicleType: plan.vehicleType,
+        update: () => {}
+      })),
+      loadTuningProfile
+    });
+
+    expect(system.getVehicles()).toHaveLength(2);
+    expect(loadTuningProfile).toHaveBeenCalledTimes(1);
+
+    system.dispose();
+  });
 });

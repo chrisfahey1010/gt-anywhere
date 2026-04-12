@@ -39,10 +39,12 @@ export interface CreateGameAppOptions {
   capabilityDefaults?: PlayerSettings;
   logger?: Logger;
   resolver?: LocationResolver;
+  scheduleBackgroundTask?: (task: () => void) => void;
   settingsRepository?: PlayerSettingsRepository;
   eventBus?: GameEventBus;
   sliceGenerator?: WorldSliceGenerator;
   sceneLoader?: WorldSceneLoader;
+  sceneLoaderFactory?: () => Promise<WorldSceneLoader>;
   clock?: () => string;
   now?: () => number;
 }
@@ -51,6 +53,29 @@ export interface GameApp {
   getSnapshot(): SessionState;
   whenIdle(): Promise<void>;
   destroy(): void;
+}
+
+function getDefaultNow(): number {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return performance.now();
+  }
+
+  return Date.now();
+}
+
+function formatTelemetryMs(value: number): string {
+  return value.toFixed(2);
+}
+
+function scheduleDefaultBackgroundTask(task: () => void): void {
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(() => {
+      task();
+    });
+    return;
+  }
+
+  setTimeout(task, 0);
 }
 
 async function createDefaultWorldSceneLoader(): Promise<WorldSceneLoader> {
@@ -123,12 +148,15 @@ interface CachedWorldLoadData {
 export async function createGameApp(options: CreateGameAppOptions): Promise<GameApp> {
   const logger = options.logger ?? createLogger();
   const resolver = options.resolver ?? new LocationResolver();
+  const scheduleBackgroundTask = options.scheduleBackgroundTask ?? scheduleDefaultBackgroundTask;
   const settingsRepository = options.settingsRepository ?? new LocalStoragePlayerSettingsRepository();
   const capabilityDefaults = options.capabilityDefaults ?? resolveCapabilityDefaultPlayerSettings();
   const eventBus = options.eventBus ?? new GameEventBus();
   const sliceGenerator = options.sliceGenerator ?? new DefaultWorldSliceGenerator();
+  const sceneLoaderFactory = options.sceneLoaderFactory ?? createDefaultWorldSceneLoader;
   const clock = options.clock ?? (() => new Date().toISOString());
-  const now = options.now ?? (() => Date.now());
+  const now = options.now ?? getDefaultNow;
+  const appStartedAtMs = now();
   const { hudHost, renderHost, shellHost } = createAppHosts(options.host);
   const screen = new LocationEntryScreen({
      host: shellHost,
@@ -161,6 +189,30 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   let removeCombatSubscription = (): void => {};
   let removeHeatSubscription = (): void => {};
   let removeRunOutcomeSubscription = (): void => {};
+
+  const clearLoadTelemetry = (): void => {
+    delete renderHost.dataset.worldManifestDurationMs;
+    delete renderHost.dataset.worldManifestReadyAtMs;
+    delete renderHost.dataset.worldSceneDurationMs;
+    delete renderHost.dataset.worldSceneReadyAtMs;
+    delete renderHost.dataset.worldLoadFailedAtMs;
+    delete renderHost.dataset.worldLoadFailedDurationMs;
+  };
+
+  const emitShellReadyTelemetry = (): void => {
+    const shellReadyAtMs = now() - appStartedAtMs;
+
+    renderHost.dataset.shellReadyAtMs = formatTelemetryMs(shellReadyAtMs);
+    eventBus.emit({
+      type: "app.shell.ready",
+      durationMs: shellReadyAtMs,
+      phase: "location-select"
+    });
+    logger.info("app.shell.ready", {
+      durationMs: shellReadyAtMs,
+      phase: "location-select"
+    });
+  };
 
   const render = (): void => {
     screen.render(state);
@@ -251,17 +303,23 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
       return sceneLoader;
     }
 
-    sceneLoaderPromise ??= createDefaultWorldSceneLoader().then((loader) => {
-      sceneLoader = loader;
+    sceneLoaderPromise ??= sceneLoaderFactory()
+      .then((loader) => {
+        sceneLoader = loader;
 
-      return loader;
-    });
+        return loader;
+      })
+      .catch((error) => {
+        sceneLoaderPromise = null;
+        throw error;
+      });
 
     return sceneLoaderPromise;
   };
 
   const emitLoadFailure = (request: WorldGenerationRequest, failure: WorldLoadFailure, startedAtMs: number): void => {
-    const durationMs = now() - startedAtMs;
+    const completedAtMs = now();
+    const durationMs = completedAtMs - startedAtMs;
 
     eventBus.emit({
       type: "world.load.failed",
@@ -276,6 +334,8 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
       durationMs,
       ...failure.details
     });
+    renderHost.dataset.worldLoadFailedAtMs = formatTelemetryMs(completedAtMs - appStartedAtMs);
+    renderHost.dataset.worldLoadFailedDurationMs = formatTelemetryMs(durationMs);
 
     disposeWorldScene();
     state = transitionSessionState(state, {
@@ -285,10 +345,14 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     render();
   };
 
-  const beginLoadAttempt = (): { startedAtMs: number; loadId: number } => ({
-    startedAtMs: now(),
-    loadId: ++activeLoadId
-  });
+  const beginLoadAttempt = (): { startedAtMs: number; loadId: number } => {
+    clearLoadTelemetry();
+
+    return {
+      startedAtMs: now(),
+      loadId: ++activeLoadId
+    };
+  };
 
   const emitManifestReady = (
     request: WorldGenerationRequest,
@@ -296,7 +360,8 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     spawnCandidate: SpawnCandidate,
     startedAtMs: number
   ): void => {
-    const manifestDurationMs = now() - startedAtMs;
+    const completedAtMs = now();
+    const manifestDurationMs = completedAtMs - startedAtMs;
 
     eventBus.emit({
       type: "world.manifest.ready",
@@ -312,6 +377,8 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
       chunkCount: manifest.chunks.length,
       roadCount: manifest.roads.length
     });
+    renderHost.dataset.worldManifestReadyAtMs = formatTelemetryMs(completedAtMs - appStartedAtMs);
+    renderHost.dataset.worldManifestDurationMs = formatTelemetryMs(manifestDurationMs);
 
     state = transitionSessionState(state, {
       type: "world.manifest.ready",
@@ -382,7 +449,8 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
         return;
       }
 
-      const readyDurationMs = now() - startedAtMs;
+      const completedAtMs = now();
+      const readyDurationMs = completedAtMs - startedAtMs;
 
       eventBus.emit({
         type: "world.scene.ready",
@@ -397,6 +465,8 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
         durationMs: readyDurationMs,
         readinessMilestone: "controllable-vehicle"
       });
+      renderHost.dataset.worldSceneReadyAtMs = formatTelemetryMs(completedAtMs - appStartedAtMs);
+      renderHost.dataset.worldSceneDurationMs = formatTelemetryMs(readyDurationMs);
 
       state = transitionSessionState(state, { type: "world.scene.ready" });
       render();
@@ -532,6 +602,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   function handleEdit(): void {
     activeLoadId += 1;
     disposeWorldScene();
+    clearLoadTelemetry();
     state = transitionSessionState(state, { type: "location.edit.requested" });
     render();
   }
@@ -666,6 +737,10 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
 
   state = transitionSessionState(state, { type: "app.boot.completed" });
   render();
+  emitShellReadyTelemetry();
+  scheduleBackgroundTask(() => {
+    void getSceneLoader().catch(() => undefined);
+  });
 
   return {
     getSnapshot: () => state,

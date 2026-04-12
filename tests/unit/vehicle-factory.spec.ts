@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Scene, Engine, NullEngine } from '@babylonjs/core';
-import { createVehicleFactory, loadTuningProfile } from '../../src/vehicles/physics/vehicle-factory';
+import {
+  clearVehicleTuningProfileCache,
+  createVehicleFactory,
+  loadTuningProfile
+} from '../../src/vehicles/physics/vehicle-factory';
 import type { PlayerVehicleController } from '../../src/vehicles/controllers/player-vehicle-controller';
 import type { SpawnCandidate } from '../../src/world/chunks/slice-manifest';
 
@@ -39,6 +43,7 @@ describe('Vehicle Factory & Tuning Profiles', () => {
       getState: vi.fn().mockReturnValue({ throttle: 0, brake: 0, steering: 0, handbrake: false })
     } as unknown as PlayerVehicleController;
     vi.clearAllMocks();
+    clearVehicleTuningProfileCache();
   });
 
   describe('Tuning Data Loading', () => {
@@ -76,6 +81,44 @@ describe('Vehicle Factory & Tuning Profiles', () => {
       });
 
       await expect(loadTuningProfile('invalid-vehicle')).rejects.toThrow('Failed to load tuning profile for invalid-vehicle');
+    });
+
+    it('reuses the same in-flight tuning fetch for repeated callers of the same vehicle type', async () => {
+      const mockTuning = {
+        name: 'Sports Car',
+        mass: 1400,
+        color: '#ff0000',
+        maxForwardSpeed: 25,
+        maxReverseSpeed: 10,
+        maxTurnRate: 2.2,
+        damage: {
+          durability: 60,
+          impactSpeedThreshold: 8
+        },
+        model: { bodyStyle: 'sports-car' as const },
+        dimensions: { width: 1.8, height: 1.2, length: 4.2 }
+      };
+      let resolveResponse: ((value: { ok: true; json(): Promise<typeof mockTuning> }) => void) | undefined;
+
+      fetchMock.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveResponse = resolve as typeof resolveResponse;
+          })
+      );
+
+      const firstLoad = loadTuningProfile('sports-car');
+      const secondLoad = loadTuningProfile('sports-car');
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      resolveResponse?.({
+        ok: true,
+        json: async () => mockTuning
+      });
+
+      await expect(Promise.all([firstLoad, secondLoad])).resolves.toEqual([mockTuning, mockTuning]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
   });
 

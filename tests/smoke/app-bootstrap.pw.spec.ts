@@ -7,11 +7,24 @@ import {
 test("boots to the location shell and reaches a slice-ready world after a valid submission", async ({
   page
 }) => {
+  const requestCounts = new Map<string, number>();
+
+  page.on("requestfinished", (request) => {
+    const { pathname } = new URL(request.url());
+
+    if (pathname === "/data/world-gen/location-presets.json" || pathname.startsWith("/data/tuning/")) {
+      requestCounts.set(pathname, (requestCounts.get(pathname) ?? 0) + 1);
+    }
+  });
+
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Enter a real-world location" })).toBeVisible();
 
   const locationInput = page.getByTestId("location-input");
+  const renderHost = page.getByTestId("render-host");
+
+  await expect(renderHost).toHaveAttribute("data-shell-ready-at-ms", /\d+\.\d+/);
 
   await locationInput.fill(validLocationAliasQuery);
   await locationInput.press("Enter");
@@ -37,10 +50,22 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
   const initialFpsEstimate = Number((await canvas.getAttribute("data-performance-fps-estimate")) ?? "0");
   const initialFrameTimeP50Ms = Number((await canvas.getAttribute("data-performance-frame-time-p50-ms")) ?? "0");
   const initialFrameTimeP95Ms = Number((await canvas.getAttribute("data-performance-frame-time-p95-ms")) ?? "0");
+  const shellReadyAtMs = Number((await renderHost.getAttribute("data-shell-ready-at-ms")) ?? "0");
+  const manifestReadyAtMs = Number((await renderHost.getAttribute("data-world-manifest-ready-at-ms")) ?? "0");
+  const sceneReadyAtMs = Number((await renderHost.getAttribute("data-world-scene-ready-at-ms")) ?? "0");
+  const initialPresetRequests = requestCounts.get("/data/world-gen/location-presets.json") ?? 0;
+  const initialTuningRequests = [...requestCounts.entries()]
+    .filter(([pathname]) => pathname.startsWith("/data/tuning/"))
+    .reduce((total, [, count]) => total + count, 0);
 
   expect(initialFpsEstimate).toBeGreaterThan(0);
   expect(initialFrameTimeP50Ms).toBeGreaterThan(0);
   expect(initialFrameTimeP95Ms).toBeGreaterThanOrEqual(initialFrameTimeP50Ms);
+  expect(shellReadyAtMs).toBeGreaterThan(0);
+  expect(manifestReadyAtMs).toBeGreaterThan(shellReadyAtMs);
+  expect(sceneReadyAtMs).toBeGreaterThan(manifestReadyAtMs);
+  expect(initialPresetRequests).toBe(1);
+  expect(initialTuningRequests).toBeGreaterThan(0);
 
   const startingDistance = Number((await canvas.getAttribute("data-starter-vehicle-distance")) ?? "0");
 
@@ -78,6 +103,16 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
       }
     )
     .toBeLessThan(0.25);
+  expect(requestCounts.get("/data/world-gen/location-presets.json") ?? 0).toBe(initialPresetRequests);
+  expect(
+    [...requestCounts.entries()]
+      .filter(([pathname]) => pathname.startsWith("/data/tuning/"))
+      .reduce((total, [, count]) => total + count, 0)
+  ).toBe(initialTuningRequests);
+  expect(Number((await renderHost.getAttribute("data-world-manifest-ready-at-ms")) ?? "0")).toBeGreaterThan(
+    manifestReadyAtMs
+  );
+  expect(Number((await renderHost.getAttribute("data-world-scene-ready-at-ms")) ?? "0")).toBeGreaterThan(sceneReadyAtMs);
 
   await canvas.click();
   await page.keyboard.down("w");

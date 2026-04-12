@@ -116,6 +116,16 @@ describe("location entry integration", () => {
     };
   }
 
+  function createIncrementingNow(start = 100, step = 25): () => number {
+    let current = start;
+
+    return () => {
+      const value = current;
+      current += step;
+      return value;
+    };
+  }
+
   it("shows the resolved place name and lets the player return to editing after the world becomes ready", async () => {
     document.body.innerHTML = '<div id="app"></div>';
 
@@ -158,6 +168,68 @@ describe("location entry integration", () => {
     expect(app.getSnapshot().phase).toBe("location-select");
     expect(inputAfterEdit.disabled).toBe(false);
     expect(inputAfterEdit.value).toBe("San Francisco, CA");
+  });
+
+  it("prewarms the lazy world scene loader after shell boot and reuses the memoized loader for the first world load", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const scheduledTasks: Array<() => void> = [];
+    let sceneLoaderFactoryCalls = 0;
+    let sceneLoadCalls = 0;
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => ({
+        ok: true,
+        manifest,
+        spawnCandidate: manifest.spawnCandidates[0]
+      })
+    };
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost }) => {
+        sceneLoadCalls += 1;
+        renderHost.innerHTML = '<div data-testid="world-ready-scene">Fake world scene</div>';
+
+        return {
+          canvas: document.createElement("canvas"),
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+
+    const app = await createGameApp({
+      host,
+      sliceGenerator,
+      sceneLoaderFactory: async () => {
+        sceneLoaderFactoryCalls += 1;
+        return sceneLoader;
+      },
+      scheduleBackgroundTask: (task) => {
+        scheduledTasks.push(task);
+      }
+    });
+
+    expect(host.querySelector('[data-testid="location-input"]')).not.toBeNull();
+    expect(sceneLoaderFactoryCalls).toBe(0);
+    expect(scheduledTasks).toHaveLength(1);
+
+    scheduledTasks[0]?.();
+    await Promise.resolve();
+
+    expect(sceneLoaderFactoryCalls).toBe(1);
+
+    const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationAliasQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    await app.whenIdle();
+
+    expect(app.getSnapshot().phase).toBe("world-ready");
+    expect(sceneLoaderFactoryCalls).toBe(1);
+    expect(sceneLoadCalls).toBe(1);
   });
 
   it("shows same-location replay options only in world-ready and normalizes each launch into one replay selection contract", async () => {
@@ -248,6 +320,7 @@ describe("location entry integration", () => {
     document.body.innerHTML = '<div id="app"></div>';
 
     const host = document.querySelector("#app") as HTMLElement;
+    const now = createIncrementingNow();
     const manifestStoreById = new Map<string, SliceManifest>();
     const manifestStoreByReuseKey = new Map<string, SliceManifest>();
     const baseResolver = new LocationResolver();
@@ -299,15 +372,23 @@ describe("location entry integration", () => {
       resolver: resolver as LocationResolver,
       sliceGenerator,
       sceneLoader,
-      clock: () => "2026-04-07T00:00:00.000Z"
+      clock: () => "2026-04-07T00:00:00.000Z",
+      now
     });
     const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
     const form = host.querySelector("form") as HTMLFormElement;
+    const renderHost = host.querySelector('[data-testid="render-host"]') as HTMLDivElement;
 
     input.value = validLocationAliasQuery;
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 
     await app.whenIdle();
+
+    const firstManifestReadyAtMs = Number(renderHost.dataset.worldManifestReadyAtMs ?? "0");
+    const firstSceneReadyAtMs = Number(renderHost.dataset.worldSceneReadyAtMs ?? "0");
+
+    expect(firstManifestReadyAtMs).toBeGreaterThan(0);
+    expect(firstSceneReadyAtMs).toBeGreaterThan(firstManifestReadyAtMs);
 
     (host.querySelector('[data-testid="replay-vehicle-heavy-truck"]') as HTMLButtonElement).click();
     await app.whenIdle();
@@ -323,12 +404,16 @@ describe("location entry integration", () => {
     expect(sceneLoadRecords[0]?.manifest).toBe(sceneLoadRecords[1]?.manifest);
     expect(sceneLoadRecords[0]?.replaySelectionId).toBeNull();
     expect(sceneLoadRecords[1]?.replaySelectionId).toBe("vehicle-heavy-truck");
+    expect(Number(renderHost.dataset.worldManifestReadyAtMs ?? "0")).toBeGreaterThan(firstManifestReadyAtMs);
+    expect(Number(renderHost.dataset.worldSceneReadyAtMs ?? "0")).toBeGreaterThan(firstSceneReadyAtMs);
+    expect(renderHost.dataset.worldLoadFailedAtMs).toBeUndefined();
   });
 
   it("offers restart from spawn in world-ready and does not resolve the location again", async () => {
     document.body.innerHTML = '<div id="app"></div>';
 
     const host = document.querySelector("#app") as HTMLElement;
+    const now = createIncrementingNow();
     let resolveCalls = 0;
     let generateCalls = 0;
     const baseResolver = new LocationResolver();
@@ -387,16 +472,24 @@ describe("location entry integration", () => {
       resolver: resolver as LocationResolver,
       sliceGenerator,
       sceneLoader,
-      clock: () => "2026-04-07T00:00:00.000Z"
+      clock: () => "2026-04-07T00:00:00.000Z",
+      now
     });
 
     const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
     const form = host.querySelector("form") as HTMLFormElement;
+    const renderHost = host.querySelector('[data-testid="render-host"]') as HTMLDivElement;
 
     input.value = validLocationAliasQuery;
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 
     await app.whenIdle();
+
+    const firstManifestReadyAtMs = Number(renderHost.dataset.worldManifestReadyAtMs ?? "0");
+    const firstSceneReadyAtMs = Number(renderHost.dataset.worldSceneReadyAtMs ?? "0");
+
+    expect(firstManifestReadyAtMs).toBeGreaterThan(0);
+    expect(firstSceneReadyAtMs).toBeGreaterThan(firstManifestReadyAtMs);
 
     const restartAction = host.querySelector('[data-testid="restart-from-spawn"]') as HTMLButtonElement;
 
@@ -421,6 +514,9 @@ describe("location entry integration", () => {
       manifest,
       spawnCandidate: manifest.spawnCandidates[0]
     });
+    expect(Number(renderHost.dataset.worldManifestReadyAtMs ?? "0")).toBeGreaterThan(firstManifestReadyAtMs);
+    expect(Number(renderHost.dataset.worldSceneReadyAtMs ?? "0")).toBeGreaterThan(firstSceneReadyAtMs);
+    expect(renderHost.dataset.worldLoadFailedAtMs).toBeUndefined();
   });
 
   it("stores a serializable handoff contract and emits typed events with structured logs", async () => {
@@ -431,10 +527,15 @@ describe("location entry integration", () => {
     const { sliceGenerator, sceneLoader } = createSuccessfulWorldDependencies();
     const emittedEvents: string[] = [];
     const logEntries: LogEntry[] = [];
+    let shellReadyDurationMs: number | null = null;
     let manifestDurationMs: number | null = null;
     let readyMilestone: string | null = null;
     let sceneDurationMs: number | null = null;
 
+    eventBus.on("app.shell.ready", (event) => {
+      emittedEvents.push(event.type);
+      shellReadyDurationMs = event.durationMs;
+    });
     eventBus.on("session.location.submitted", (event) => emittedEvents.push(event.type));
     eventBus.on("session.location.resolved", (event) => emittedEvents.push(event.type));
     eventBus.on("world.generation.requested", (event) => emittedEvents.push(event.type));
@@ -457,11 +558,19 @@ describe("location entry integration", () => {
       logger: createLogger((entry) => {
         logEntries.push(entry);
       }),
-      clock: () => "2026-04-07T00:00:00.000Z"
+      clock: () => "2026-04-07T00:00:00.000Z",
+      now: createIncrementingNow()
     });
+
+    const renderHost = host.querySelector('[data-testid="render-host"]') as HTMLDivElement;
 
     const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
     const form = host.querySelector("form") as HTMLFormElement;
+
+    expect(renderHost.dataset.phase).toBe("location-select");
+    expect(Number(renderHost.dataset.shellReadyAtMs ?? "0")).toBeGreaterThan(0);
+    expect(renderHost.dataset.worldManifestReadyAtMs).toBeUndefined();
+    expect(renderHost.dataset.worldSceneReadyAtMs).toBeUndefined();
 
     input.value = validLocationAliasQuery;
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
@@ -473,6 +582,7 @@ describe("location entry integration", () => {
     expect(serializedHandoff.location.placeName).toBe("San Francisco, CA");
     expect(serializedHandoff.pipeline).toContain("SliceManifestStore");
     expect(emittedEvents).toEqual([
+      "app.shell.ready",
       "session.location.submitted",
       "session.location.resolved",
       "world.generation.requested",
@@ -481,6 +591,7 @@ describe("location entry integration", () => {
       "world.scene.ready"
     ]);
     expect(logEntries.map((entry) => entry.eventName)).toEqual([
+      "app.shell.ready",
       "session.location.submitted",
       "session.location.resolved",
       "world.generation.requested",
@@ -488,6 +599,10 @@ describe("location entry integration", () => {
       "world.manifest.ready",
       "world.scene.ready"
     ]);
+    expect(logEntries.find((entry) => entry.eventName === "app.shell.ready")?.context).toMatchObject({
+      durationMs: expect.any(Number),
+      phase: "location-select"
+    });
     expect(logEntries.find((entry) => entry.eventName === "world.manifest.ready")?.context).toMatchObject({
       durationMs: expect.any(Number),
       chunkCount: expect.any(Number),
@@ -497,9 +612,18 @@ describe("location entry integration", () => {
       durationMs: expect.any(Number),
       readinessMilestone: "controllable-vehicle"
     });
+    expect(shellReadyDurationMs).toEqual(expect.any(Number));
     expect(manifestDurationMs).toEqual(expect.any(Number));
     expect(readyMilestone).toBe("controllable-vehicle");
     expect(sceneDurationMs).toEqual(expect.any(Number));
+    expect(Number(renderHost.dataset.worldManifestReadyAtMs ?? "0")).toBeGreaterThan(
+      Number(renderHost.dataset.shellReadyAtMs ?? "0")
+    );
+    expect(Number(renderHost.dataset.worldSceneReadyAtMs ?? "0")).toBeGreaterThan(
+      Number(renderHost.dataset.worldManifestReadyAtMs ?? "0")
+    );
+    expect(Number(renderHost.dataset.worldManifestDurationMs ?? "0")).toBeGreaterThan(0);
+    expect(Number(renderHost.dataset.worldSceneDurationMs ?? "0")).toBeGreaterThan(0);
   });
 
   it("emits a typed starter-vehicle spawn failure while preserving the loaded slice context", async () => {
@@ -646,6 +770,7 @@ describe("location entry integration", () => {
     document.body.innerHTML = '<div id="app"></div>';
 
     const host = document.querySelector("#app") as HTMLElement;
+    const now = createIncrementingNow();
     const emittedEvents: string[] = [];
     const eventBus = new GameEventBus();
     let generateCalls = 0;
@@ -684,9 +809,10 @@ describe("location entry integration", () => {
     eventBus.on("world.load.failed", (event) => emittedEvents.push(event.type));
     eventBus.on("world.scene.ready", (event) => emittedEvents.push(event.type));
 
-    const app = await createGameApp({ host, eventBus, sliceGenerator, sceneLoader });
+    const app = await createGameApp({ host, eventBus, sliceGenerator, sceneLoader, now });
     const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
     const form = host.querySelector("form") as HTMLFormElement;
+    const renderHost = host.querySelector('[data-testid="render-host"]') as HTMLDivElement;
 
     input.value = validLocationAliasQuery;
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
@@ -696,16 +822,31 @@ describe("location entry integration", () => {
     expect(app.getSnapshot().phase).toBe("world-load-error");
     expect(host.textContent).toContain("San Francisco, CA");
     expect(host.textContent).toContain("Retry load");
+    expect(Number(renderHost.dataset.worldManifestReadyAtMs ?? "0")).toBeGreaterThan(0);
+    expect(renderHost.dataset.worldSceneReadyAtMs).toBeUndefined();
+    expect(Number(renderHost.dataset.worldLoadFailedAtMs ?? "0")).toBeGreaterThan(0);
+    expect(Number(renderHost.dataset.worldLoadFailedDurationMs ?? "0")).toBeGreaterThan(0);
 
     const retryAction = host.querySelector('[data-testid="retry-load"]') as HTMLButtonElement;
 
     retryAction.click();
+    await Promise.resolve();
+
+    expect(renderHost.dataset.worldSceneReadyAtMs).toBeUndefined();
+    expect(renderHost.dataset.worldLoadFailedAtMs).toBeUndefined();
+    expect(renderHost.dataset.worldLoadFailedDurationMs).toBeUndefined();
+
     await app.whenIdle();
 
     expect(app.getSnapshot().phase).toBe("world-ready");
     expect(app.getSnapshot().sliceManifest?.sliceId).toBe(manifest.sliceId);
     expect(generateCalls).toBe(1);
     expect(emittedEvents).toEqual(["world.load.failed", "world.scene.ready"]);
+    expect(Number(renderHost.dataset.worldManifestReadyAtMs ?? "0")).toBeGreaterThan(0);
+    expect(Number(renderHost.dataset.worldSceneReadyAtMs ?? "0")).toBeGreaterThan(
+      Number(renderHost.dataset.worldManifestReadyAtMs ?? "0")
+    );
+    expect(renderHost.dataset.worldLoadFailedAtMs).toBeUndefined();
   });
 
   it("disposes the previous world scene and keeps a single ready scene after restart", async () => {

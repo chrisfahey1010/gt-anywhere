@@ -168,8 +168,18 @@ export async function createTrafficSystem(options: CreateTrafficSystemOptions): 
   const roadsById = new Map(options.manifest.roads.map((road) => [road.id, road]));
   const trafficPlans = options.manifest.traffic?.vehicles ?? [];
   const vehicleStates: TrafficSystemVehicleState[] = [];
+  const tuningByVehicleType = new Map<string, VehicleTuning>();
 
   try {
+    const uniqueVehicleTypes = [...new Set(trafficPlans.map((plan) => plan.vehicleType))];
+    const loadedTunings = await Promise.all(
+      uniqueVehicleTypes.map(async (vehicleType) => [vehicleType, await loadTuning(vehicleType)] as const)
+    );
+
+    loadedTunings.forEach(([vehicleType, tuning]) => {
+      tuningByVehicleType.set(vehicleType, tuning);
+    });
+
     for (const plan of trafficPlans) {
       const road = roadsById.get(plan.roadId);
 
@@ -178,7 +188,12 @@ export async function createTrafficSystem(options: CreateTrafficSystemOptions): 
       }
 
       const route = createTrafficRoute(road);
-      const tuning = await loadTuning(plan.vehicleType);
+      const tuning = tuningByVehicleType.get(plan.vehicleType);
+
+      if (!tuning) {
+        throw new Error(`Missing tuning profile for traffic vehicle type '${plan.vehicleType}'.`);
+      }
+
       const runtime = spawnTrafficVehicle({
         controller: options.controller,
         parent: options.parent,

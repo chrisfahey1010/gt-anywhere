@@ -1,3 +1,4 @@
+import { vi } from "vitest";
 import {
   createWorldGenerationRequest,
   LocationResolver,
@@ -244,6 +245,34 @@ describe("world slice generator", () => {
 
     expect(aliasResult.manifest.sliceId).toBe(canonicalResult.manifest.sliceId);
     expect(aliasResult.manifest.roads).toEqual(canonicalResult.manifest.roads);
+  });
+
+  it("reuses a stored compatible manifest instead of regenerating the same slice twice", async () => {
+    const basePresetSource = createPresetSource();
+    const manifestStore = new InMemorySliceManifestStore();
+    const fetchPreset = vi.fn(async (reuseKey: string) => basePresetSource.fetch(reuseKey));
+    const generator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: {
+        fetch: fetchPreset
+      },
+      generationVersion: "story-4-3-cache",
+      manifestStore
+    });
+    const request = await createRequest(validLocationAliasQuery);
+    const firstResult = await generator.generate(request);
+    const secondResult = await generator.generate(request);
+
+    expect(firstResult.ok).toBe(true);
+    expect(secondResult.ok).toBe(true);
+
+    if (!firstResult.ok || !secondResult.ok) {
+      return;
+    }
+
+    expect(fetchPreset).toHaveBeenCalledTimes(1);
+    expect(secondResult.manifest).toBe(firstResult.manifest);
+    expect(secondResult.spawnCandidate).toEqual(firstResult.spawnCandidate);
+    expect(generator.getStoredManifest?.(request.compatibilityKey)).toBe(firstResult.manifest);
   });
 
   it.each([
