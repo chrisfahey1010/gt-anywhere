@@ -199,8 +199,16 @@ export async function createSceneResponderRuntime(
   const roadsById = new Map(options.manifest.roads.map((road) => [road.id, road]));
   const routeCache = new Map<string, TrafficRoute>();
   const responders: ResponderVehicleState[] = [];
+  const responderVehicles: TrafficVehicleRuntime[] = [];
   let directContactEstablished = false;
   let previousRoadId: string | undefined;
+
+  const syncResponderVehicles = (): void => {
+    responderVehicles.length = 0;
+    responders.forEach((responder) => {
+      responderVehicles.push(responder.runtime);
+    });
+  };
 
   const getRoute = (road: SliceRoad): TrafficRoute => {
     const cachedRoute = routeCache.get(road.id);
@@ -249,10 +257,11 @@ export async function createSceneResponderRuntime(
   return {
     dispose: () => {
       responders.splice(0).forEach(disposeResponder);
+      syncResponderVehicles();
       directContactEstablished = false;
       previousRoadId = undefined;
     },
-    getVehicles: () => responders.map((responder) => responder.runtime),
+    getVehicles: () => responderVehicles,
     update: ({ activeVehicle, heatSnapshot }) => {
       const currentRoad =
         resolveCurrentRoad({
@@ -266,6 +275,7 @@ export async function createSceneResponderRuntime(
 
       if (currentRoad === null) {
         responders.splice(0).forEach(disposeResponder);
+        syncResponderVehicles();
         directContactEstablished = false;
         previousRoadId = undefined;
 
@@ -321,6 +331,8 @@ export async function createSceneResponderRuntime(
           })
         );
       });
+
+      syncResponderVehicles();
 
       const responderContact = evaluateResponderContact({
         directContactEstablished,

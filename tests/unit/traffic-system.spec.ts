@@ -259,4 +259,65 @@ describe("traffic system", () => {
 
     expect(updateCalls[0]?.brake).toBeGreaterThan(updateCalls[0]?.throttle ?? 0);
   });
+
+  it("returns a stable traffic vehicle list so the scene can observe traffic without per-frame remapping", async () => {
+    const { manifest, spawnCandidate } = createManifest([
+      {
+        chunkId: "chunk-0-0",
+        direction: "forward",
+        headingDegrees: 0,
+        id: "market-st-traffic-0-0",
+        position: { x: 0, y: 0, z: -20 },
+        roadId: "market-st",
+        speedScale: 0.5,
+        startDistance: 20,
+        vehicleType: "sedan"
+      }
+    ]);
+
+    const system = await createTrafficSystem({
+      controller: {
+        bindVehicle: () => {},
+        captureInputFrame: () => {
+          throw new Error("not used in traffic system test");
+        },
+        consumeSwitchVehicleRequest: () => false,
+        dispose: () => {},
+        getState: () => {
+          throw new Error("traffic vehicles must not read player controller state");
+        },
+        unbindVehicle: () => {}
+      },
+      manifest,
+      parent: root,
+      scene,
+      spawnCandidate,
+      spawnTrafficVehicle: vi.fn(({ plan, tuning }) => ({
+        damageState: createPristineVehicleDamageState(),
+        dispose: () => {},
+        id: plan.id,
+        mesh: {
+          getDirection: () => new Vector3(0, 0, 1),
+          name: `traffic-vehicle-${plan.id}`,
+          position: new Vector3(plan.position.x, 1.7, plan.position.z),
+          rotation: { y: 0 }
+        },
+        physicsAggregate: {
+          body: {
+            getLinearVelocity: () => Vector3.Zero()
+          }
+        },
+        tuning,
+        vehicleType: plan.vehicleType,
+        update: () => {}
+      })),
+      loadTuningProfile: vi.fn(async () => createTuning())
+    });
+
+    const firstRead = system.getVehicles();
+    const secondRead = system.getVehicles();
+
+    expect(secondRead).toBe(firstRead);
+    expect(secondRead[0]).toBe(firstRead[0]);
+  });
 });

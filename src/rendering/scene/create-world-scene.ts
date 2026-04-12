@@ -45,7 +45,8 @@ import {
   createWorldNavigationSnapshot,
   sanitizeWorldRuntimeInputFrame,
   syncWorldSceneTelemetry,
-  type WorldNavigationSnapshot
+  type WorldNavigationSnapshot,
+  type WorldPerformanceTelemetry
 } from "./world-scene-runtime";
 import { createTrafficSystem, type TrafficSystem } from "../../traffic/runtime/traffic-system";
 import {
@@ -83,6 +84,7 @@ import {
   type ReplaySelection,
   type ReplayStarterVehicleType
 } from "../../app/config/replay-options";
+import { readBrowserPlatformSignals, type BrowserFamily } from "../../app/config/platform";
 import type { GraphicsPreset, PlayerSettings } from "../../app/config/settings-schema";
 import type { HeatEvent, HeatRuntimeSnapshot } from "../../sandbox/heat/heat-runtime";
 import {
@@ -93,6 +95,44 @@ import {
 
 const AVAILABLE_VEHICLE_TYPES = REPLAY_VEHICLE_TYPES;
 const DEFAULT_VEHICLE_TYPE = AVAILABLE_VEHICLE_TYPES[0];
+const PERFORMANCE_TELEMETRY_SAMPLE_WINDOW = 120;
+const PERFORMANCE_TELEMETRY_UPDATE_INTERVAL = 15;
+
+const SCENE_BROWSER_GRAPHICS_ADJUSTMENTS: Record<BrowserFamily, { hardwareScalingMultiplier: number; lightIntensityMultiplier: number }> = {
+  chromium: {
+    hardwareScalingMultiplier: 1,
+    lightIntensityMultiplier: 1
+  },
+  firefox: {
+    hardwareScalingMultiplier: 1.1,
+    lightIntensityMultiplier: 0.97
+  },
+  unknown: {
+    hardwareScalingMultiplier: 1,
+    lightIntensityMultiplier: 1
+  },
+  webkit: {
+    hardwareScalingMultiplier: 1.2,
+    lightIntensityMultiplier: 0.94
+  }
+};
+
+function getFrameTimePercentile(sortedFrameTimes: number[], percentile: number): number {
+  if (sortedFrameTimes.length === 0) {
+    return 0;
+  }
+
+  const percentileIndex = Math.min(
+    sortedFrameTimes.length - 1,
+    Math.max(0, Math.ceil(sortedFrameTimes.length * percentile) - 1)
+  );
+
+  return sortedFrameTimes[percentileIndex] ?? 0;
+}
+
+function roundSceneProfileValue(value: number): number {
+  return Math.round(value * 100) / 100;
+}
 
 const SCENE_GRAPHICS_PRESET_PROFILES = {
   low: {
@@ -124,8 +164,18 @@ export function resolveSceneStarterVehicleType(
   return starterVehicleType ?? DEFAULT_VEHICLE_TYPE;
 }
 
-export function resolveSceneGraphicsPresetProfile(graphicsPreset: GraphicsPreset): SceneGraphicsPresetProfile {
-  return { ...SCENE_GRAPHICS_PRESET_PROFILES[graphicsPreset] };
+export function resolveSceneGraphicsPresetProfile(
+  graphicsPreset: GraphicsPreset,
+  browserFamily: BrowserFamily = "unknown"
+): SceneGraphicsPresetProfile {
+  const baseProfile = SCENE_GRAPHICS_PRESET_PROFILES[graphicsPreset];
+  const browserAdjustment = SCENE_BROWSER_GRAPHICS_ADJUSTMENTS[browserFamily];
+
+  return {
+    graphicsPreset: baseProfile.graphicsPreset,
+    hardwareScalingLevel: roundSceneProfileValue(baseProfile.hardwareScalingLevel * browserAdjustment.hardwareScalingMultiplier),
+    lightIntensity: roundSceneProfileValue(baseProfile.lightIntensity * browserAdjustment.lightIntensityMultiplier)
+  };
 }
 
 export interface WorldSceneHandle {
@@ -339,7 +389,8 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
   async load(options: CreateWorldSceneOptions): Promise<WorldSceneHandle> {
     const { renderHost, manifest, settings, spawnCandidate, starterVehicleType } = options;
     const initialStarterVehicleType = resolveSceneStarterVehicleType(starterVehicleType);
-    const graphicsProfile = resolveSceneGraphicsPresetProfile(settings.graphicsPreset);
+    const platformSignals = readBrowserPlatformSignals();
+    const graphicsProfile = resolveSceneGraphicsPresetProfile(settings.graphicsPreset, platformSignals.browserFamily);
     const canvas = document.createElement("canvas");
     canvas.className = "world-canvas";
     canvas.setAttribute("aria-label", `${manifest.location.placeName} world view`);
@@ -694,6 +745,56 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     const heatListeners = new Set<(options: { events: HeatEvent[]; snapshot: HeatRuntimeSnapshot }) => void>();
     const runOutcomeListeners = new Set<(options: { events: RunOutcomeEvent[]; snapshot: RunOutcomeSnapshot }) => void>();
     const navigationRoadSnapshots = createWorldNavigationRoadSnapshots(manifest.roads);
+    const frameTimeSamples: number[] = [];
+    const performanceTelemetry: WorldPerformanceTelemetry = {
+      activeMeshCount: 0,
+      fpsEstimate: 0,
+      frameTimeP50Ms: 0,
+      frameTimeP95Ms: 0,
+      meshCount: scene.meshes.length,
+      sampleCount: 0
+    };
+    const combinedTrafficVehicles: Array<NonNullable<Parameters<typeof updateSceneCombat>[0]["trafficVehicles"]>[number]> = [];
+    const sceneTelemetryVehicles: Array<Parameters<typeof applyChaosSceneTelemetry>[0]["vehicles"][number]> = [];
+    let frameTimeSampleSumMs = 0;
+    let nextFrameTimeSampleIndex = 0;
+    let framesSincePerformanceRefresh = PERFORMANCE_TELEMETRY_UPDATE_INTERVAL;
+
+    const recordWorldPerformanceFrame = (frameTimeMs: number): void => {
+      if (Number.isFinite(frameTimeMs) && frameTimeMs > 0) {
+        const overwrittenSample = frameTimeSamples[nextFrameTimeSampleIndex];
+
+        if (overwrittenSample !== undefined) {
+          frameTimeSampleSumMs -= overwrittenSample;
+        }
+
+        frameTimeSamples[nextFrameTimeSampleIndex] = frameTimeMs;
+        frameTimeSampleSumMs += frameTimeMs;
+        nextFrameTimeSampleIndex = (nextFrameTimeSampleIndex + 1) % PERFORMANCE_TELEMETRY_SAMPLE_WINDOW;
+      }
+
+      performanceTelemetry.sampleCount = frameTimeSamples.length;
+      performanceTelemetry.meshCount = scene.meshes.length;
+      performanceTelemetry.activeMeshCount = scene.getActiveMeshes().length;
+
+      if (frameTimeSamples.length === 0) {
+        return;
+      }
+
+      framesSincePerformanceRefresh += 1;
+
+      if (framesSincePerformanceRefresh < PERFORMANCE_TELEMETRY_UPDATE_INTERVAL && performanceTelemetry.sampleCount > 1) {
+        return;
+      }
+
+      const sortedFrameTimes = frameTimeSamples.slice().sort((left, right) => left - right);
+      const averageFrameTimeMs = frameTimeSampleSumMs / frameTimeSamples.length;
+
+      performanceTelemetry.fpsEstimate = averageFrameTimeMs > 0 ? 1000 / averageFrameTimeMs : 0;
+      performanceTelemetry.frameTimeP50Ms = getFrameTimePercentile(sortedFrameTimes, 0.5);
+      performanceTelemetry.frameTimeP95Ms = getFrameTimePercentile(sortedFrameTimes, 0.95);
+      framesSincePerformanceRefresh = 0;
+    };
 
     const completeHijack = (nextVehicle: ManagedVehicleRuntime): void => {
       const previousVehicle = vehicleManager.getActiveVehicle();
@@ -823,6 +924,15 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       });
       const trafficVehicles = trafficSystem?.getVehicles() ?? [];
       const responderVehicles = responderRuntime.getVehicles();
+
+      combinedTrafficVehicles.length = 0;
+      trafficVehicles.forEach((trafficVehicle) => {
+        combinedTrafficVehicles.push(trafficVehicle);
+      });
+      responderVehicles.forEach((responderVehicle) => {
+        combinedTrafficVehicles.push(responderVehicle);
+      });
+
       const combatUpdate = updateSceneCombat({
         activeVehicle: vehicleManager.getActiveVehicle(),
         chaosRuntime,
@@ -835,7 +945,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         onFootActor: possessionRuntime.getOnFootRuntime(),
         pedestrianSystem,
         runtime: combatRuntime,
-        trafficVehicles: [...trafficVehicles, ...responderVehicles]
+        trafficVehicles: combinedTrafficVehicles
       });
 
       if (combatListeners.size > 0 && combatUpdate.events.length > 0) {
@@ -860,7 +970,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         deltaSeconds: deltaTimeMs / 1000,
         hijackableVehicles,
         runtime: chaosRuntime,
-        trafficVehicles: [...trafficVehicles, ...responderVehicles]
+        trafficVehicles: combinedTrafficVehicles
       });
       const heatEvents = updateSceneHeat({
         chaosEvents,
@@ -917,6 +1027,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         canvas,
         fallbackCameraName: camera.name,
         onFootActorId: possessionRuntime.getOnFootRuntime()?.mesh.name,
+        performanceTelemetry,
         possessionMode: possessionRuntime.getMode(),
         scene,
         spawnPoint
@@ -951,12 +1062,25 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         pedestrianSystem,
         scene
       });
+
+      sceneTelemetryVehicles.length = 0;
+      sceneTelemetryVehicles.push(vehicleManager.getActiveVehicle());
+      hijackableVehicles.forEach((vehicle) => {
+        sceneTelemetryVehicles.push(vehicle);
+      });
+      trafficVehicles.forEach((vehicle) => {
+        sceneTelemetryVehicles.push(vehicle);
+      });
+      responderVehicles.forEach((vehicle) => {
+        sceneTelemetryVehicles.push(vehicle);
+      });
+
       applyChaosSceneTelemetry({
         canvas,
         events: recentChaosEvents,
         runtime: chaosRuntime,
         scene,
-        vehicles: [vehicleManager.getActiveVehicle(), ...hijackableVehicles, ...trafficVehicles, ...responderVehicles]
+        vehicles: sceneTelemetryVehicles
       });
       applyCombatSceneTelemetry({
         canvas,
@@ -1036,6 +1160,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       physicsReady: scene.isPhysicsEnabled(),
       graphicsHardwareScalingLevel: graphicsProfile.hardwareScalingLevel,
       graphicsLightIntensity: graphicsProfile.lightIntensity,
+      graphicsBrowserFamily: platformSignals.browserFamily,
       settingsGraphicsPreset: settings.graphicsPreset,
       settingsPedestrianDensity: settings.pedestrianDensity,
       settingsTrafficDensity: settings.trafficDensity,
@@ -1058,6 +1183,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     };
     canvas.dataset.readyMilestone = "controllable-vehicle";
     canvas.dataset.activeCamera = camera.name;
+    canvas.dataset.graphicsBrowserFamily = platformSignals.browserFamily;
     canvas.dataset.settingsGraphicsPreset = settings.graphicsPreset;
     canvas.dataset.settingsPedestrianDensity = settings.pedestrianDensity;
     canvas.dataset.settingsTrafficDensity = settings.trafficDensity;
@@ -1076,6 +1202,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     engine.runRenderLoop(() => {
       currentInputFrame = controller.captureInputFrame();
       scene.render();
+      recordWorldPerformanceFrame(engine.getDeltaTime() || 16);
       syncCanvasTelemetry();
     });
 

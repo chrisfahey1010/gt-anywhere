@@ -431,16 +431,22 @@ describe("location entry integration", () => {
     const { sliceGenerator, sceneLoader } = createSuccessfulWorldDependencies();
     const emittedEvents: string[] = [];
     const logEntries: LogEntry[] = [];
+    let manifestDurationMs: number | null = null;
     let readyMilestone: string | null = null;
+    let sceneDurationMs: number | null = null;
 
     eventBus.on("session.location.submitted", (event) => emittedEvents.push(event.type));
     eventBus.on("session.location.resolved", (event) => emittedEvents.push(event.type));
     eventBus.on("world.generation.requested", (event) => emittedEvents.push(event.type));
     eventBus.on("world.generation.started", (event) => emittedEvents.push(event.type));
-    eventBus.on("world.manifest.ready", (event) => emittedEvents.push(event.type));
+    eventBus.on("world.manifest.ready", (event) => {
+      emittedEvents.push(event.type);
+      manifestDurationMs = event.durationMs;
+    });
     eventBus.on("world.scene.ready", (event) => {
       emittedEvents.push(event.type);
       readyMilestone = event.readinessMilestone;
+      sceneDurationMs = event.durationMs;
     });
 
     const app = await createGameApp({
@@ -491,7 +497,9 @@ describe("location entry integration", () => {
       durationMs: expect.any(Number),
       readinessMilestone: "controllable-vehicle"
     });
+    expect(manifestDurationMs).toEqual(expect.any(Number));
     expect(readyMilestone).toBe("controllable-vehicle");
+    expect(sceneDurationMs).toEqual(expect.any(Number));
   });
 
   it("emits a typed starter-vehicle spawn failure while preserving the loaded slice context", async () => {

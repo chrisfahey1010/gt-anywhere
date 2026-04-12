@@ -23,9 +23,19 @@ export interface SyncWorldSceneTelemetryOptions {
   canvas: HTMLCanvasElement;
   fallbackCameraName: string;
   onFootActorId?: string;
+  performanceTelemetry?: WorldPerformanceTelemetry;
   possessionMode: WorldScenePossessionMode;
   scene: Pick<Scene, "activeCamera" | "metadata">;
   spawnPoint: Vector3;
+}
+
+export interface WorldPerformanceTelemetry {
+  activeMeshCount?: number;
+  fpsEstimate: number;
+  frameTimeP50Ms: number;
+  frameTimeP95Ms: number;
+  meshCount?: number;
+  sampleCount: number;
 }
 
 export interface WorldNavigationRoadSnapshot {
@@ -200,8 +210,12 @@ export function getWorldSceneActiveCameraName(
   return scene.activeCamera?.name ?? fallbackCameraName;
 }
 
+function formatWorldPerformanceValue(value: number): string {
+  return value.toFixed(2);
+}
+
 export function syncWorldSceneTelemetry(options: SyncWorldSceneTelemetryOptions): void {
-  const { activeVehicle, canvas, fallbackCameraName, onFootActorId, possessionMode, scene, spawnPoint } = options;
+  const { activeVehicle, canvas, fallbackCameraName, onFootActorId, performanceTelemetry, possessionMode, scene, spawnPoint } = options;
   const deltaX = activeVehicle.mesh.position.x - spawnPoint.x;
   const deltaZ = activeVehicle.mesh.position.z - spawnPoint.z;
   const horizontalDistance = Math.sqrt(deltaX * deltaX + deltaZ * deltaZ);
@@ -209,12 +223,23 @@ export function syncWorldSceneTelemetry(options: SyncWorldSceneTelemetryOptions)
 
   if (scene.metadata && typeof scene.metadata === "object") {
     Object.assign(scene.metadata, {
-      activeCamera: activeCameraName,
-      activeVehicleType: activeVehicle.vehicleType,
-      possessionMode,
-      starterVehicleId: activeVehicle.mesh.name
-    });
-  }
+        activeCamera: activeCameraName,
+        activeVehicleType: activeVehicle.vehicleType,
+        possessionMode,
+        starterVehicleId: activeVehicle.mesh.name
+      });
+
+      if (performanceTelemetry) {
+        Object.assign(scene.metadata, {
+          performanceActiveMeshCount: performanceTelemetry.activeMeshCount,
+          performanceFpsEstimate: performanceTelemetry.fpsEstimate,
+          performanceFrameTimeP50Ms: performanceTelemetry.frameTimeP50Ms,
+          performanceFrameTimeP95Ms: performanceTelemetry.frameTimeP95Ms,
+          performanceMeshCount: performanceTelemetry.meshCount,
+          performanceSampleCount: performanceTelemetry.sampleCount
+        });
+      }
+    }
 
   canvas.dataset.starterVehicleDistance = horizontalDistance.toFixed(3);
   canvas.dataset.starterVehicleId = activeVehicle.mesh.name;
@@ -224,4 +249,19 @@ export function syncWorldSceneTelemetry(options: SyncWorldSceneTelemetryOptions)
   canvas.dataset.activeCamera = activeCameraName;
   canvas.dataset.possessionMode = possessionMode;
   canvas.dataset.onFootActorId = onFootActorId ?? "";
+
+  if (performanceTelemetry) {
+    canvas.dataset.performanceFpsEstimate = formatWorldPerformanceValue(performanceTelemetry.fpsEstimate);
+    canvas.dataset.performanceFrameTimeP50Ms = formatWorldPerformanceValue(performanceTelemetry.frameTimeP50Ms);
+    canvas.dataset.performanceFrameTimeP95Ms = formatWorldPerformanceValue(performanceTelemetry.frameTimeP95Ms);
+    canvas.dataset.performanceSampleCount = String(performanceTelemetry.sampleCount);
+
+    if (performanceTelemetry.meshCount !== undefined) {
+      canvas.dataset.performanceMeshCount = String(performanceTelemetry.meshCount);
+    }
+
+    if (performanceTelemetry.activeMeshCount !== undefined) {
+      canvas.dataset.performanceActiveMeshCount = String(performanceTelemetry.activeMeshCount);
+    }
+  }
 }

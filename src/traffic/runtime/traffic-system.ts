@@ -204,13 +204,15 @@ export async function createTrafficSystem(options: CreateTrafficSystemOptions): 
     throw error;
   }
 
+  const vehicles = vehicleStates.map((state) => state.runtime);
+
   return {
     dispose: () => {
       vehicleStates.forEach((state) => {
         state.runtime.dispose();
       });
     },
-    getVehicles: () => vehicleStates.map((state) => state.runtime),
+    getVehicles: () => vehicles,
     update: (deltaSeconds: number) => {
       const dynamicObstacles = options.getObstacleVehicles?.() ?? [];
 
@@ -219,10 +221,7 @@ export async function createTrafficSystem(options: CreateTrafficSystemOptions): 
           return;
         }
 
-        const peerVehicles = vehicleStates
-          .filter((candidate) => candidate !== state)
-          .map((candidate) => candidate.runtime);
-        const obstacleDistance = measureObstacleDistance(state.runtime, dynamicObstacles, peerVehicles);
+        const obstacleDistance = measureObstacleDistance(state.runtime, dynamicObstacles, vehicles);
 
         advanceTrafficProgress(state, deltaSeconds, obstacleDistance);
 

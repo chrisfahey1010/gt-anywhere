@@ -77,6 +77,33 @@ describe("player settings", () => {
     expect(HARD_FALLBACK_PLAYER_SETTINGS.worldSize).toBe("medium");
   });
 
+  it("keeps supported-browser capability defaults conservative through the existing settings contract", () => {
+    expect(
+      resolveCapabilityDefaultPlayerSettings({
+        browserFamily: "firefox",
+        hardwareConcurrency: 16,
+        deviceMemoryGiB: 16
+      })
+    ).toEqual({
+      worldSize: "medium",
+      graphicsPreset: "medium",
+      trafficDensity: "high",
+      pedestrianDensity: "high"
+    });
+    expect(
+      resolveCapabilityDefaultPlayerSettings({
+        browserFamily: "webkit",
+        hardwareConcurrency: 16,
+        deviceMemoryGiB: 16
+      })
+    ).toEqual({
+      worldSize: "medium",
+      graphicsPreset: "medium",
+      trafficDensity: "medium",
+      pedestrianDensity: "medium"
+    });
+  });
+
   it("hydrates boot settings with saved values before capability defaults and hard fallbacks", () => {
     expect(
       resolveBootPlayerSettings({

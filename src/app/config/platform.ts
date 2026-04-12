@@ -4,9 +4,11 @@ import {
   type PlayerSettings
 } from "./settings-schema";
 
+export type BrowserFamily = "chromium" | "firefox" | "webkit" | "unknown";
 export type HardwareTier = "low" | "medium" | "high";
 
 export interface PlatformSignalSnapshot {
+  browserFamily: BrowserFamily;
   hardwareConcurrency: number | null;
   deviceMemoryGiB: number | null;
 }
@@ -24,6 +26,34 @@ interface ResolveInteractivePlayerSettingsOptions extends ResolvePlayerSettingsO
 type NavigatorWithDeviceMemory = Navigator & {
   deviceMemory?: number;
 };
+
+function detectBrowserFamily(userAgent: unknown): BrowserFamily {
+  const normalizedUserAgent = typeof userAgent === "string" ? userAgent.toLowerCase() : "";
+
+  if (normalizedUserAgent.includes("firefox/")) {
+    return "firefox";
+  }
+
+  if (
+    normalizedUserAgent.includes("applewebkit") &&
+    normalizedUserAgent.includes("safari/") &&
+    !normalizedUserAgent.includes("chrome/") &&
+    !normalizedUserAgent.includes("chromium") &&
+    !normalizedUserAgent.includes("edg/")
+  ) {
+    return "webkit";
+  }
+
+  if (
+    normalizedUserAgent.includes("chrome/") ||
+    normalizedUserAgent.includes("chromium") ||
+    normalizedUserAgent.includes("edg/")
+  ) {
+    return "chromium";
+  }
+
+  return "unknown";
+}
 
 function normalizeNumericSignal(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
@@ -63,11 +93,50 @@ function mergePlayerSettingsLayers(
   return resolved;
 }
 
+function resolveBrowserAdjustedDefaults(baseDefaults: PlayerSettings, browserFamily: BrowserFamily): PlayerSettings {
+  switch (browserFamily) {
+    case "firefox":
+      return {
+        ...baseDefaults,
+        graphicsPreset: baseDefaults.graphicsPreset === "high" ? "medium" : baseDefaults.graphicsPreset
+      };
+
+    case "webkit":
+      return {
+        ...baseDefaults,
+        graphicsPreset:
+          baseDefaults.graphicsPreset === "high"
+            ? "medium"
+            : baseDefaults.graphicsPreset === "medium"
+              ? "low"
+              : baseDefaults.graphicsPreset,
+        trafficDensity:
+          baseDefaults.trafficDensity === "high"
+            ? "medium"
+            : baseDefaults.trafficDensity === "medium"
+              ? "low"
+              : baseDefaults.trafficDensity,
+        pedestrianDensity:
+          baseDefaults.pedestrianDensity === "high"
+            ? "medium"
+            : baseDefaults.pedestrianDensity === "medium"
+              ? "low"
+              : baseDefaults.pedestrianDensity
+      };
+
+    case "chromium":
+    case "unknown":
+    default:
+      return baseDefaults;
+  }
+}
+
 export function readBrowserPlatformSignals(
   navigatorLike: NavigatorWithDeviceMemory | null | undefined =
     typeof window === "undefined" ? null : (window.navigator as NavigatorWithDeviceMemory)
 ): PlatformSignalSnapshot {
   return {
+    browserFamily: detectBrowserFamily(navigatorLike?.userAgent),
     hardwareConcurrency: normalizeNumericSignal(navigatorLike?.hardwareConcurrency),
     deviceMemoryGiB: normalizeNumericSignal(navigatorLike?.deviceMemory)
   };
@@ -76,26 +145,35 @@ export function readBrowserPlatformSignals(
 export function resolveCapabilityDefaultPlayerSettings(
   signals: Partial<PlatformSignalSnapshot> = readBrowserPlatformSignals()
 ): PlayerSettings {
-  switch (detectHardwareTier(signals)) {
+  const hardwareTier = detectHardwareTier(signals);
+  const browserFamily = signals.browserFamily ?? "unknown";
+
+  switch (hardwareTier) {
     case "low":
-      return {
-        worldSize: "medium",
-        graphicsPreset: "low",
-        trafficDensity: "low",
-        pedestrianDensity: "low"
-      };
+      return resolveBrowserAdjustedDefaults(
+        {
+          worldSize: "medium",
+          graphicsPreset: "low",
+          trafficDensity: "low",
+          pedestrianDensity: "low"
+        },
+        browserFamily
+      );
 
     case "high":
-      return {
-        worldSize: "medium",
-        graphicsPreset: "high",
-        trafficDensity: "high",
-        pedestrianDensity: "high"
-      };
+      return resolveBrowserAdjustedDefaults(
+        {
+          worldSize: "medium",
+          graphicsPreset: "high",
+          trafficDensity: "high",
+          pedestrianDensity: "high"
+        },
+        browserFamily
+      );
 
     case "medium":
     default:
-      return { ...HARD_FALLBACK_PLAYER_SETTINGS };
+      return resolveBrowserAdjustedDefaults({ ...HARD_FALLBACK_PLAYER_SETTINGS }, browserFamily);
   }
 }
 

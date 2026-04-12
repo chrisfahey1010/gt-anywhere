@@ -144,6 +144,8 @@ function applyPanicMovement(pedestrian: PedestrianActorRuntime, threat: Pedestri
 export function createPedestrianSystem(options: CreatePedestrianSystemOptions): PedestrianSystem {
   const spawnPedestrian = options.spawnPedestrian ?? createPedestrianActor;
   const pedestrians = options.plan.pedestrians.map((plan) => spawnPedestrian({ parent: options.parent, plan, scene: options.scene }));
+  const combatHitsByPedestrianId = new Map<string, PedestrianCombatHit>();
+  const collisionsByPedestrianId = new Map<string, PedestrianCollision>();
   const queuedEvents: PedestrianEvent[] = pedestrians.map((pedestrian) => ({
     pedestrianId: pedestrian.id,
     state: pedestrian.currentState,
@@ -161,9 +163,19 @@ export function createPedestrianSystem(options: CreatePedestrianSystemOptions): 
     update: ({ collisions = [], combatHits = [], deltaSeconds, threats }) => {
       const updateEvents: PedestrianEvent[] = [];
 
+      combatHitsByPedestrianId.clear();
+      collisionsByPedestrianId.clear();
+
+      combatHits.forEach((combatHit) => {
+        combatHitsByPedestrianId.set(combatHit.pedestrianId, combatHit);
+      });
+      collisions.forEach((collision) => {
+        collisionsByPedestrianId.set(collision.pedestrianId, collision);
+      });
+
       pedestrians.forEach((pedestrian) => {
-        const combatHit = combatHits.find((candidate) => candidate.pedestrianId === pedestrian.id);
-        const collision = collisions.find((candidate) => candidate.pedestrianId === pedestrian.id);
+        const combatHit = combatHitsByPedestrianId.get(pedestrian.id);
+        const collision = collisionsByPedestrianId.get(pedestrian.id);
 
         if (combatHit || collision) {
           if (pedestrian.currentState !== "struck") {

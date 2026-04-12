@@ -48,6 +48,57 @@ describe("world scene runtime helpers", () => {
     expect(canvas.dataset.activeCamera).not.toBe(camera.getClassName());
   });
 
+  it("adds performance telemetry without renaming existing world-scene surfaces", () => {
+    const camera = new TargetCamera("starter-vehicle-camera", Vector3.Zero(), scene);
+    const canvas = document.createElement("canvas");
+
+    canvas.dataset.readyMilestone = "controllable-vehicle";
+    scene.activeCamera = camera;
+    scene.metadata = {
+      readinessMilestone: "controllable-vehicle"
+    };
+
+    syncWorldSceneTelemetry({
+      activeVehicle: {
+        mesh: {
+          name: "vehicle-runtime",
+          position: new Vector3(4, 0, -2)
+        },
+        vehicleType: "sedan"
+      },
+      canvas,
+      fallbackCameraName: "fallback-camera",
+      performanceTelemetry: {
+        activeMeshCount: 19,
+        fpsEstimate: 58.4,
+        frameTimeP50Ms: 16.7,
+        frameTimeP95Ms: 24.3,
+        meshCount: 42,
+        sampleCount: 96
+      },
+      possessionMode: "vehicle",
+      scene,
+      spawnPoint: Vector3.Zero()
+    });
+
+    expect(canvas.dataset.readyMilestone).toBe("controllable-vehicle");
+    expect(Number(canvas.dataset.performanceFpsEstimate)).toBeCloseTo(58.4, 5);
+    expect(Number(canvas.dataset.performanceFrameTimeP50Ms)).toBeCloseTo(16.7, 5);
+    expect(Number(canvas.dataset.performanceFrameTimeP95Ms)).toBeCloseTo(24.3, 5);
+    expect(canvas.dataset.performanceSampleCount).toBe("96");
+    expect(canvas.dataset.performanceMeshCount).toBe("42");
+    expect(canvas.dataset.performanceActiveMeshCount).toBe("19");
+    expect(scene.metadata).toMatchObject({
+      readinessMilestone: "controllable-vehicle",
+      performanceActiveMeshCount: 19,
+      performanceFpsEstimate: 58.4,
+      performanceFrameTimeP50Ms: 16.7,
+      performanceFrameTimeP95Ms: 24.3,
+      performanceMeshCount: 42,
+      performanceSampleCount: 96
+    });
+  });
+
   it("blocks exit interaction while a vehicle switch handoff is in flight", () => {
     const frame = {
       combatControls: {

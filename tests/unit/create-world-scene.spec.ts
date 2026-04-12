@@ -27,4 +27,22 @@ describe("create world scene", () => {
       lightIntensity: 1.05
     });
   });
+
+  it("adds explicit browser-family fallbacks without changing the selected graphics preset", () => {
+    expect(resolveSceneGraphicsPresetProfile("high", "chromium")).toEqual({
+      graphicsPreset: "high",
+      hardwareScalingLevel: 1,
+      lightIntensity: 1.05
+    });
+    expect(resolveSceneGraphicsPresetProfile("high", "firefox")).toEqual({
+      graphicsPreset: "high",
+      hardwareScalingLevel: 1.1,
+      lightIntensity: 1.02
+    });
+    expect(resolveSceneGraphicsPresetProfile("high", "webkit")).toEqual({
+      graphicsPreset: "high",
+      hardwareScalingLevel: 1.2,
+      lightIntensity: 0.99
+    });
+  });
 });

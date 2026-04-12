@@ -25,6 +25,22 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
   });
   await expect(canvas).toHaveAttribute("data-active-camera", /camera$/i);
   await expect(canvas).toHaveAttribute("data-starter-vehicle-id", /starter-vehicle-/);
+  await expect
+    .poll(
+      async () => Number((await canvas.getAttribute("data-performance-sample-count")) ?? "0"),
+      {
+        timeout: 15000
+      }
+    )
+    .toBeGreaterThan(0);
+
+  const initialFpsEstimate = Number((await canvas.getAttribute("data-performance-fps-estimate")) ?? "0");
+  const initialFrameTimeP50Ms = Number((await canvas.getAttribute("data-performance-frame-time-p50-ms")) ?? "0");
+  const initialFrameTimeP95Ms = Number((await canvas.getAttribute("data-performance-frame-time-p95-ms")) ?? "0");
+
+  expect(initialFpsEstimate).toBeGreaterThan(0);
+  expect(initialFrameTimeP50Ms).toBeGreaterThan(0);
+  expect(initialFrameTimeP95Ms).toBeGreaterThanOrEqual(initialFrameTimeP50Ms);
 
   const startingDistance = Number((await canvas.getAttribute("data-starter-vehicle-distance")) ?? "0");
 
@@ -45,6 +61,14 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
   await page.getByTestId("restart-from-spawn").click();
   await expect(page.getByTestId("loading-feedback")).toContainText("Slice ready for San Francisco, CA.");
   await expect(canvas).toHaveAttribute("data-ready-milestone", "controllable-vehicle");
+  await expect
+    .poll(
+      async () => Number((await canvas.getAttribute("data-performance-sample-count")) ?? "0"),
+      {
+        timeout: 15000
+      }
+    )
+    .toBeGreaterThan(0);
 
   await expect
     .poll(
@@ -168,6 +192,14 @@ test("persists settings across reload and applies density changes on recreated r
   await expect(canvas).toHaveAttribute("data-settings-graphics-preset", "low");
   await expect(canvas).toHaveAttribute("data-settings-traffic-density", "low");
   await expect(canvas).toHaveAttribute("data-settings-pedestrian-density", "off");
+  await expect
+    .poll(
+      async () => Number((await canvas.getAttribute("data-performance-sample-count")) ?? "0"),
+      {
+        timeout: 15000
+      }
+    )
+    .toBeGreaterThan(0);
 
   const lowTrafficCount = Number((await canvas.getAttribute("data-traffic-vehicle-count")) ?? "0");
   const lowPedestrianCount = Number((await canvas.getAttribute("data-pedestrian-count")) ?? "0");
@@ -183,6 +215,14 @@ test("persists settings across reload and applies density changes on recreated r
   await expect(canvas).toHaveAttribute("data-settings-graphics-preset", "high");
   await expect(canvas).toHaveAttribute("data-settings-traffic-density", "high");
   await expect(canvas).toHaveAttribute("data-settings-pedestrian-density", "high");
+  await expect
+    .poll(
+      async () => Number((await canvas.getAttribute("data-performance-sample-count")) ?? "0"),
+      {
+        timeout: 15000
+      }
+    )
+    .toBeGreaterThan(0);
 
   const highTrafficCount = Number((await canvas.getAttribute("data-traffic-vehicle-count")) ?? "0");
   const highPedestrianCount = Number((await canvas.getAttribute("data-pedestrian-count")) ?? "0");
