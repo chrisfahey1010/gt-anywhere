@@ -69,6 +69,6 @@ development_status:
   4-2-get-stable-performance-on-supported-desktop-browsers: done
   4-3-rely-on-the-build-loading-quickly-enough-that-browser-access-stays-low-friction: done
   4-4-experience-coherent-visual-and-audio-polish: done
-  4-5-use-the-game-on-major-supported-browsers: backlog
+  4-5-use-the-game-on-major-supported-browsers: review
   4-6-ship-a-public-quality-browser-build: backlog
   epic-4-retrospective: optional

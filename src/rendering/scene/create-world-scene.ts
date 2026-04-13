@@ -85,7 +85,12 @@ import {
   type ReplaySelection,
   type ReplayStarterVehicleType
 } from "../../app/config/replay-options";
-import { readBrowserPlatformSignals, type BrowserFamily } from "../../app/config/platform";
+import {
+  resolveBrowserSupportSnapshot,
+  type BrowserFamily,
+  type BrowserSupportSnapshot
+} from "../../app/config/platform";
+import { createSceneBrowserSupportTelemetry } from "../../app/config/browser-support-telemetry";
 import type { GraphicsPreset, PlayerSettings } from "../../app/config/settings-schema";
 import type { HeatEvent, HeatRuntimeSnapshot } from "../../sandbox/heat/heat-runtime";
 import {
@@ -209,6 +214,7 @@ export interface WorldSceneHandle {
 }
 
 export interface CreateWorldSceneOptions {
+  browserSupport?: BrowserSupportSnapshot;
   renderHost: HTMLElement;
   manifest: SliceManifest;
   replaySelection?: ReplaySelection | null;
@@ -402,10 +408,11 @@ function createHijackableSpawnCandidate(
 
 export class BabylonWorldSceneLoader implements WorldSceneLoader {
   async load(options: CreateWorldSceneOptions): Promise<WorldSceneHandle> {
-    const { renderHost, manifest, settings, spawnCandidate, starterVehicleType } = options;
+    const { browserSupport, renderHost, manifest, settings, spawnCandidate, starterVehicleType } = options;
     const initialStarterVehicleType = resolveSceneStarterVehicleType(starterVehicleType);
-    const platformSignals = readBrowserPlatformSignals();
-    const graphicsProfile = resolveSceneGraphicsPresetProfile(settings.graphicsPreset, platformSignals.browserFamily);
+    const resolvedBrowserSupport = browserSupport ?? resolveBrowserSupportSnapshot();
+    const browserSupportTelemetry = createSceneBrowserSupportTelemetry(resolvedBrowserSupport);
+    const graphicsProfile = resolveSceneGraphicsPresetProfile(settings.graphicsPreset, resolvedBrowserSupport.browserFamily);
     const visualPalette = resolveSceneVisualPalette(manifest.sceneMetadata);
     const canvas = document.createElement("canvas");
     canvas.className = "world-canvas";
@@ -413,7 +420,24 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     canvas.tabIndex = 0;
     renderHost.replaceChildren(canvas);
 
-    const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+    return new Promise<WorldSceneHandle>((resolve, reject) => {
+      const handleContextLost = (event: Event): void => {
+        event.preventDefault();
+        reject(
+          createWorldSceneRuntimeError(
+            "WORLD_SCENE_LOAD_FAILED",
+            "world-loading",
+            "The browser's render context was lost.",
+            {
+              spawnCandidateId: spawnCandidate.id
+            }
+          )
+        );
+      };
+      canvas.addEventListener("webglcontextlost", handleContextLost, false);
+
+      const doLoad = async (): Promise<WorldSceneHandle> => {
+        const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
     engine.setHardwareScalingLevel(graphicsProfile.hardwareScalingLevel);
     const scene = new Scene(engine);
     scene.clearColor = Color4.FromHexString(visualPalette.skyColor);
@@ -1199,6 +1223,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     }
 
       scene.metadata = {
+        ...browserSupportTelemetry,
         sliceId: manifest.sliceId,
         worldRootName: worldRoot.name,
       staticSurfaceRootName: staticSurfaceRoot.name,
@@ -1209,7 +1234,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       graphicsFillLightIntensity: graphicsProfile.fillLightIntensity,
       graphicsFogDensity: graphicsProfile.fogDensity,
       graphicsLightIntensity: graphicsProfile.lightIntensity,
-      graphicsBrowserFamily: platformSignals.browserFamily,
+      graphicsBrowserFamily: resolvedBrowserSupport.browserFamily,
       settingsGraphicsPreset: settings.graphicsPreset,
       settingsPedestrianDensity: settings.pedestrianDensity,
       settingsTrafficDensity: settings.trafficDensity,
@@ -1238,10 +1263,25 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     };
     canvas.dataset.readyMilestone = "controllable-vehicle";
     canvas.dataset.activeCamera = camera.name;
+    canvas.dataset.browserAudioContextAvailable = browserSupportTelemetry.browserAudioContextAvailable;
+    canvas.dataset.browserCapabilityDefaultGraphicsPreset = browserSupportTelemetry.browserCapabilityDefaultGraphicsPreset;
+    canvas.dataset.browserCapabilityDefaultPedestrianDensity = browserSupportTelemetry.browserCapabilityDefaultPedestrianDensity;
+    canvas.dataset.browserCapabilityDefaultTrafficDensity = browserSupportTelemetry.browserCapabilityDefaultTrafficDensity;
+    canvas.dataset.browserCapabilityDefaultWorldSize = browserSupportTelemetry.browserCapabilityDefaultWorldSize;
+    canvas.dataset.browserFamily = browserSupportTelemetry.browserFamily;
+    canvas.dataset.browserLocalStorageAvailable = browserSupportTelemetry.browserLocalStorageAvailable;
+    canvas.dataset.browserMutationObserverAvailable = browserSupportTelemetry.browserMutationObserverAvailable;
+    canvas.dataset.browserPerformanceNowAvailable = browserSupportTelemetry.browserPerformanceNowAvailable;
+    canvas.dataset.browserRequestIdleCallbackAvailable = browserSupportTelemetry.browserRequestIdleCallbackAvailable;
+    canvas.dataset.browserSupportIssues = browserSupportTelemetry.browserSupportIssues;
+    canvas.dataset.browserSupportTier = browserSupportTelemetry.browserSupportTier;
+    canvas.dataset.browserWebgl2Available = browserSupportTelemetry.browserWebgl2Available;
     canvas.dataset.graphicsBoundaryAlpha = graphicsProfile.boundaryAlpha.toFixed(2);
-    canvas.dataset.graphicsBrowserFamily = platformSignals.browserFamily;
+    canvas.dataset.graphicsBrowserFamily = resolvedBrowserSupport.browserFamily;
     canvas.dataset.graphicsFillLightIntensity = graphicsProfile.fillLightIntensity.toFixed(2);
     canvas.dataset.graphicsFogDensity = graphicsProfile.fogDensity.toFixed(4);
+    canvas.dataset.graphicsHardwareScalingLevel = graphicsProfile.hardwareScalingLevel.toFixed(2);
+    canvas.dataset.graphicsLightIntensity = graphicsProfile.lightIntensity.toFixed(2);
     canvas.dataset.settingsGraphicsPreset = settings.graphicsPreset;
     canvas.dataset.settingsPedestrianDensity = settings.pedestrianDensity;
     canvas.dataset.settingsTrafficDensity = settings.trafficDensity;
@@ -1342,5 +1382,17 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
 
       throw error;
     }
-  }
+  };
+
+  doLoad()
+    .then((handle) => {
+      canvas.removeEventListener("webglcontextlost", handleContextLost, false);
+      resolve(handle);
+    })
+    .catch((error) => {
+      canvas.removeEventListener("webglcontextlost", handleContextLost, false);
+      reject(error);
+    });
+  });
+}
 }

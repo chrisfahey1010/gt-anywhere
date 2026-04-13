@@ -25,6 +25,9 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
   const locationInput = page.getByTestId("location-input");
   const renderHost = page.getByTestId("render-host");
 
+  await expect(renderHost).toHaveAttribute("data-browser-family", browserName);
+  await expect(renderHost).toHaveAttribute("data-browser-support-tier", /supported|degraded/);
+  await expect(renderHost).toHaveAttribute("data-browser-webgl2-available", "true");
   await expect(renderHost).toHaveAttribute("data-shell-ready-at-ms", /\d+\.\d+/);
 
   await locationInput.fill(validLocationAliasQuery);
@@ -33,6 +36,10 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
   const canvas = page.locator("canvas");
 
   await expect(canvas).toBeVisible({ timeout: 15000 });
+  await expect(canvas).toHaveAttribute("data-browser-family", browserName);
+  await expect(canvas).toHaveAttribute("data-browser-support-tier", /supported|degraded/);
+  await expect(canvas).toHaveAttribute("data-browser-webgl2-available", "true");
+  await expect(canvas).toHaveAttribute("data-graphics-browser-family", browserName);
   await expect(canvas).toHaveAttribute("data-ready-milestone", "controllable-vehicle", { timeout: 15000 });
   await expect(canvas).toHaveAttribute("data-graphics-fog-density", /\d+\.\d{4}/);
   await expect(canvas).toHaveAttribute("data-visual-palette-sky-color", /#[0-9a-f]{6}/i);
@@ -233,6 +240,10 @@ test("persists settings across reload and applies density changes on recreated r
   const canvas = page.locator("canvas");
 
   await expect(canvas).toHaveAttribute("data-ready-milestone", "controllable-vehicle", { timeout: 15000 });
+  await expect(canvas).toHaveAttribute("data-browser-family", browserName);
+  await expect(canvas).toHaveAttribute("data-browser-support-tier", /supported|degraded/);
+  await expect(canvas).toHaveAttribute("data-browser-webgl2-available", "true");
+  await expect(canvas).toHaveAttribute("data-graphics-browser-family", browserName);
   await expect(canvas).toHaveAttribute("data-graphics-fog-density", "0.0000");
   await expect(canvas).toHaveAttribute("data-audio-profile", "low");
   await expect(canvas).toHaveAttribute("data-audio-ambience-enabled", "false");
@@ -259,6 +270,14 @@ test("persists settings across reload and applies density changes on recreated r
   await page.getByTestId("restart-from-spawn").click();
 
   await expect(canvas).toHaveAttribute("data-ready-milestone", "controllable-vehicle", { timeout: 15000 });
+  await expect(canvas).toHaveAttribute("data-browser-family", browserName);
+  await expect(canvas).toHaveAttribute("data-browser-support-tier", /supported|degraded/);
+  await expect(canvas).toHaveAttribute("data-browser-webgl2-available", "true");
+  await expect(canvas).toHaveAttribute("data-graphics-browser-family", browserName);
+  await expect(canvas).toHaveAttribute(
+    "data-graphics-hardware-scaling-level",
+    browserName === "firefox" ? "1.10" : browserName === "webkit" ? "1.20" : "1.00"
+  );
   await expect(canvas).toHaveAttribute("data-graphics-fog-density", "0.0014");
   await expect(canvas).toHaveAttribute("data-audio-profile", "high");
   await expect(canvas).toHaveAttribute(

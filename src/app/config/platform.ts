@@ -1,4 +1,5 @@
 import {
+  arePlayerSettingsEqual,
   HARD_FALLBACK_PLAYER_SETTINGS,
   parsePartialPlayerSettings,
   type GraphicsPreset,
@@ -7,6 +8,43 @@ import {
 
 export type BrowserFamily = "chromium" | "firefox" | "webkit" | "unknown";
 export type HardwareTier = "low" | "medium" | "high";
+export type BrowserSupportTier = "supported" | "degraded" | "unsupported";
+export type BrowserSupportIssue =
+  | "audio-blocked"
+  | "audio-unavailable"
+  | "browser-family-concessions"
+  | "mutation-observer-unavailable"
+  | "performance-now-unavailable"
+  | "request-idle-callback-unavailable"
+  | "storage-unavailable"
+  | "unsupported-browser-family"
+  | "webgl2-unavailable";
+
+export interface BrowserAudioSupportState {
+  available: boolean;
+  unlockState: "blocked" | "uninitialized" | "unlocked" | "unsupported";
+}
+
+export interface BrowserEnvironmentCapabilities {
+  mutationObserver: boolean;
+  performanceNow: boolean;
+  requestIdleCallback: boolean;
+  webgl2: boolean;
+}
+
+export interface BrowserSupportCapabilities extends BrowserEnvironmentCapabilities {
+  audioContext: boolean;
+  localStorage: boolean;
+}
+
+export interface BrowserSupportSnapshot {
+  browserFamily: BrowserFamily;
+  capabilities: BrowserSupportCapabilities;
+  capabilityDefaults: PlayerSettings;
+  hardwareTier: HardwareTier;
+  issues: BrowserSupportIssue[];
+  supportTier: BrowserSupportTier;
+}
 
 export interface PlatformSignalSnapshot {
   browserFamily: BrowserFamily;
@@ -29,6 +67,19 @@ interface ResolvePlayerSettingsOptions {
 
 interface ResolveInteractivePlayerSettingsOptions extends ResolvePlayerSettingsOptions {
   explicitShellSettings?: Partial<PlayerSettings> | null;
+}
+
+export interface ResolveBrowserSupportSnapshotOptions {
+  audioSupport?: BrowserAudioSupportState | null;
+  capabilityDefaults?: PlayerSettings | null;
+  environmentCapabilities?: Partial<BrowserEnvironmentCapabilities> | null;
+  signals?: Partial<PlatformSignalSnapshot>;
+  storageAvailable?: boolean | null;
+}
+
+export interface ReadBrowserEnvironmentCapabilitiesOptions {
+  documentLike?: Document | null;
+  includeWebgl2Probe?: boolean;
 }
 
 type NavigatorWithDeviceMemory = Navigator & {
@@ -88,6 +139,30 @@ function detectHardwareTier(signals: Partial<PlatformSignalSnapshot>): HardwareT
   return "medium";
 }
 
+function resolveHardwareTierCapabilityDefaults(hardwareTier: HardwareTier): PlayerSettings {
+  switch (hardwareTier) {
+    case "low":
+      return {
+        worldSize: "medium",
+        graphicsPreset: "low",
+        trafficDensity: "low",
+        pedestrianDensity: "low"
+      };
+
+    case "high":
+      return {
+        worldSize: "medium",
+        graphicsPreset: "high",
+        trafficDensity: "high",
+        pedestrianDensity: "high"
+      };
+
+    case "medium":
+    default:
+      return { ...HARD_FALLBACK_PLAYER_SETTINGS };
+  }
+}
+
 function mergePlayerSettingsLayers(
   hardFallback: PlayerSettings,
   ...layers: Array<Partial<PlayerSettings> | null | undefined>
@@ -137,6 +212,133 @@ function resolveBrowserAdjustedDefaults(baseDefaults: PlayerSettings, browserFam
     default:
       return baseDefaults;
   }
+}
+
+function detectWebgl2Support(documentLike: Document | null): boolean {
+  if (documentLike === null) {
+    return false;
+  }
+
+  const canvas = documentLike.createElement("canvas");
+  const getContext = canvas.getContext;
+
+  if (typeof getContext !== "function") {
+    return false;
+  }
+
+  try {
+    return getContext.call(canvas, "webgl2") !== null;
+  } catch {
+    return false;
+  }
+}
+
+function resolveBrowserSupportCapabilities(options: ResolveBrowserSupportSnapshotOptions): BrowserSupportCapabilities {
+  const environmentCapabilities = options.environmentCapabilities ?? {};
+  const audioSupport = options.audioSupport ?? {
+    available: true,
+    unlockState: "uninitialized" as const
+  };
+
+  return {
+    audioContext: audioSupport.available,
+    localStorage: options.storageAvailable ?? true,
+    mutationObserver: environmentCapabilities.mutationObserver ?? true,
+    performanceNow: environmentCapabilities.performanceNow ?? true,
+    requestIdleCallback: environmentCapabilities.requestIdleCallback ?? true,
+    webgl2: environmentCapabilities.webgl2 ?? true
+  };
+}
+
+function resolveBrowserSupportIssues(
+  browserFamily: BrowserFamily,
+  capabilities: BrowserSupportCapabilities,
+  capabilityDefaults: PlayerSettings,
+  hardwareTier: HardwareTier,
+  audioSupport: BrowserAudioSupportState
+): BrowserSupportIssue[] {
+  const issues: BrowserSupportIssue[] = [];
+  const hardwareTierDefaults = resolveHardwareTierCapabilityDefaults(hardwareTier);
+
+  if (browserFamily === "unknown") {
+    issues.push("unsupported-browser-family");
+  }
+
+  if (!capabilities.webgl2) {
+    issues.push("webgl2-unavailable");
+  }
+
+  if (!arePlayerSettingsEqual(capabilityDefaults, hardwareTierDefaults)) {
+    issues.push("browser-family-concessions");
+  }
+
+  if (!audioSupport.available) {
+    issues.push("audio-unavailable");
+  } else if (audioSupport.unlockState === "blocked") {
+    issues.push("audio-blocked");
+  }
+
+  if (!capabilities.localStorage) {
+    issues.push("storage-unavailable");
+  }
+
+  if (!capabilities.mutationObserver) {
+    issues.push("mutation-observer-unavailable");
+  }
+
+  if (!capabilities.performanceNow) {
+    issues.push("performance-now-unavailable");
+  }
+
+  if (!capabilities.requestIdleCallback) {
+    issues.push("request-idle-callback-unavailable");
+  }
+
+  return issues;
+}
+
+function resolveBrowserSupportTier(issues: readonly BrowserSupportIssue[]): BrowserSupportTier {
+  if (issues.includes("unsupported-browser-family") || issues.includes("webgl2-unavailable")) {
+    return "unsupported";
+  }
+
+  return issues.length > 0 ? "degraded" : "supported";
+}
+
+export function readBrowserEnvironmentCapabilities(
+  options: ReadBrowserEnvironmentCapabilitiesOptions = {}
+): BrowserEnvironmentCapabilities {
+  const includeWebgl2Probe = options.includeWebgl2Probe ?? true;
+  const documentLike = options.documentLike ?? (typeof document === "undefined" ? null : document);
+
+  return {
+    mutationObserver: typeof MutationObserver === "function",
+    performanceNow: typeof performance !== "undefined" && typeof performance.now === "function",
+    requestIdleCallback: typeof requestIdleCallback === "function",
+    webgl2: includeWebgl2Probe ? detectWebgl2Support(documentLike) : true
+  };
+}
+
+export function resolveBrowserSupportSnapshot(options: ResolveBrowserSupportSnapshotOptions = {}): BrowserSupportSnapshot {
+  const signals = options.signals ?? readBrowserPlatformSignals();
+  const browserFamily = signals.browserFamily ?? "unknown";
+  const hardwareTier = detectHardwareTier(signals);
+  const capabilityDefaults = options.capabilityDefaults ?? resolveCapabilityDefaultPlayerSettings(signals);
+  const audioSupport = options.audioSupport ?? {
+    available: true,
+    unlockState: "uninitialized" as const
+  };
+  const capabilities = resolveBrowserSupportCapabilities(options);
+  const issues = resolveBrowserSupportIssues(browserFamily, capabilities, capabilityDefaults, hardwareTier, audioSupport);
+
+  return {
+    browserFamily,
+    capabilities,
+    capabilityDefaults,
+    hardwareTier,
+    issues,
+    supportTier: resolveBrowserSupportTier(issues)
+  };
 }
 
 export function resolveAudioPolishProfile(
@@ -203,33 +405,7 @@ export function resolveCapabilityDefaultPlayerSettings(
   const hardwareTier = detectHardwareTier(signals);
   const browserFamily = signals.browserFamily ?? "unknown";
 
-  switch (hardwareTier) {
-    case "low":
-      return resolveBrowserAdjustedDefaults(
-        {
-          worldSize: "medium",
-          graphicsPreset: "low",
-          trafficDensity: "low",
-          pedestrianDensity: "low"
-        },
-        browserFamily
-      );
-
-    case "high":
-      return resolveBrowserAdjustedDefaults(
-        {
-          worldSize: "medium",
-          graphicsPreset: "high",
-          trafficDensity: "high",
-          pedestrianDensity: "high"
-        },
-        browserFamily
-      );
-
-    case "medium":
-    default:
-      return resolveBrowserAdjustedDefaults({ ...HARD_FALLBACK_PLAYER_SETTINGS }, browserFamily);
-  }
+  return resolveBrowserAdjustedDefaults(resolveHardwareTierCapabilityDefaults(hardwareTier), browserFamily);
 }
 
 export function resolveBootPlayerSettings(options: ResolvePlayerSettingsOptions = {}): PlayerSettings {

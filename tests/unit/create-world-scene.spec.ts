@@ -1,7 +1,6 @@
-import {
-  resolveSceneGraphicsPresetProfile,
-  resolveSceneStarterVehicleType
-} from "../../src/rendering/scene/create-world-scene";
+import { createSceneBrowserSupportTelemetry } from "../../src/app/config/browser-support-telemetry";
+import { resolveSceneGraphicsPresetProfile, resolveSceneStarterVehicleType } from "../../src/rendering/scene/create-world-scene";
+import type { BrowserSupportSnapshot } from "../../src/app/config/platform";
 
 describe("create world scene", () => {
   it("keeps the sedan baseline unless a replay launch requests a different starter vehicle", () => {
@@ -61,6 +60,45 @@ describe("create world scene", () => {
       graphicsPreset: "high",
       hardwareScalingLevel: 1.2,
       lightIntensity: 0.99
+    });
+  });
+
+  it("maps browser support snapshots into explicit scene telemetry fields", () => {
+    const browserSupport: BrowserSupportSnapshot = {
+      browserFamily: "webkit",
+      capabilities: {
+        audioContext: true,
+        localStorage: false,
+        mutationObserver: true,
+        performanceNow: true,
+        requestIdleCallback: false,
+        webgl2: true
+      },
+      capabilityDefaults: {
+        worldSize: "medium",
+        graphicsPreset: "medium",
+        trafficDensity: "medium",
+        pedestrianDensity: "medium"
+      },
+      hardwareTier: "high",
+      issues: ["browser-family-concessions", "storage-unavailable", "request-idle-callback-unavailable"],
+      supportTier: "degraded"
+    };
+
+    expect(createSceneBrowserSupportTelemetry(browserSupport)).toEqual({
+      browserAudioContextAvailable: "true",
+      browserCapabilityDefaultGraphicsPreset: "medium",
+      browserCapabilityDefaultPedestrianDensity: "medium",
+      browserCapabilityDefaultTrafficDensity: "medium",
+      browserCapabilityDefaultWorldSize: "medium",
+      browserFamily: "webkit",
+      browserLocalStorageAvailable: "false",
+      browserMutationObserverAvailable: "true",
+      browserPerformanceNowAvailable: "true",
+      browserRequestIdleCallbackAvailable: "false",
+      browserSupportIssues: "browser-family-concessions,storage-unavailable,request-idle-callback-unavailable",
+      browserSupportTier: "degraded",
+      browserWebgl2Available: "true"
     });
   });
 });

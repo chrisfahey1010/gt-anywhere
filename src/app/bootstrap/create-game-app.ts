@@ -1,6 +1,17 @@
 import { GameEventBus } from "../events/game-events";
 import { createWorldAudioRuntime, type WorldAudioRuntime, type WorldAudioTelemetry } from "../../audio/world-audio-runtime";
-import { readBrowserPlatformSignals, resolveAudioPolishProfile, resolveCapabilityDefaultPlayerSettings } from "../config/platform";
+import {
+  readBrowserEnvironmentCapabilities,
+  readBrowserPlatformSignals,
+  resolveAudioPolishProfile,
+  resolveBrowserSupportSnapshot,
+  resolveCapabilityDefaultPlayerSettings,
+  type BrowserEnvironmentCapabilities,
+  type BrowserSupportIssue,
+  type BrowserSupportSnapshot,
+  type PlatformSignalSnapshot
+} from "../config/platform";
+import { createSceneBrowserSupportTelemetry } from "../config/browser-support-telemetry";
 import type { ReplaySelection } from "../config/replay-options";
 import type { PlayerSettings } from "../config/settings-schema";
 import { createLogger, type Logger } from "../logging/logger";
@@ -37,6 +48,7 @@ import type { HeatRuntimeSnapshot } from "../../sandbox/heat/heat-runtime";
 import type { RunOutcomeSnapshot } from "../../sandbox/reset/run-outcome-runtime";
 
 export interface CreateGameAppOptions {
+  browserEnvironmentCapabilities?: BrowserEnvironmentCapabilities;
   host: HTMLElement;
   capabilityDefaults?: PlayerSettings;
   logger?: Logger;
@@ -50,6 +62,7 @@ export interface CreateGameAppOptions {
   audioRuntime?: WorldAudioRuntime;
   clock?: () => string;
   now?: () => number;
+  platformSignals?: PlatformSignalSnapshot;
 }
 
 export interface GameApp {
@@ -57,6 +70,12 @@ export interface GameApp {
   whenIdle(): Promise<void>;
   destroy(): void;
 }
+
+const DEFAULT_INJECTED_LOADER_PLATFORM_SIGNALS: PlatformSignalSnapshot = {
+  browserFamily: "chromium",
+  deviceMemoryGiB: 8,
+  hardwareConcurrency: 8
+};
 
 function getDefaultNow(): number {
   if (typeof performance !== "undefined" && typeof performance.now === "function") {
@@ -123,6 +142,46 @@ function createSceneLoadFailure(request: WorldGenerationRequest, error: unknown)
   );
 }
 
+function getBlockingBrowserSupportReason(browserSupport: BrowserSupportSnapshot): BrowserSupportIssue | null {
+  if (browserSupport.issues.includes("webgl2-unavailable")) {
+    return "webgl2-unavailable";
+  }
+
+  if (browserSupport.issues.includes("unsupported-browser-family")) {
+    return "unsupported-browser-family";
+  }
+
+  return null;
+}
+
+function createUnsupportedBrowserLoadFailure(
+  request: WorldGenerationRequest,
+  browserSupport: BrowserSupportSnapshot
+): WorldLoadFailure {
+  const reason = getBlockingBrowserSupportReason(browserSupport) ?? "unsupported-browser-family";
+
+  return createWorldLoadFailure(
+    "UNSUPPORTED_BROWSER",
+    "browser-support",
+    "GT Anywhere needs a supported desktop browser with WebGL2. Try current Chromium, Firefox, or Safari/WebKit.",
+    request.location.placeName,
+    {
+      browserFamily: browserSupport.browserFamily,
+      reason,
+      supportIssues: browserSupport.issues,
+      supportTier: browserSupport.supportTier
+    }
+  );
+}
+
+function applyBrowserSupportDataset(target: HTMLElement, browserSupport: BrowserSupportSnapshot): void {
+  const telemetry = createSceneBrowserSupportTelemetry(browserSupport);
+
+  Object.entries(telemetry).forEach(([key, value]) => {
+    target.dataset[key] = value;
+  });
+}
+
 function createAppHosts(host: HTMLElement): {
   hudHost: HTMLDivElement;
   renderHost: HTMLDivElement;
@@ -178,19 +237,45 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   const resolver = options.resolver ?? new LocationResolver();
   const scheduleBackgroundTask = options.scheduleBackgroundTask ?? scheduleDefaultBackgroundTask;
   const settingsRepository = options.settingsRepository ?? new LocalStoragePlayerSettingsRepository();
-  const capabilityDefaults = options.capabilityDefaults ?? resolveCapabilityDefaultPlayerSettings();
   const eventBus = options.eventBus ?? new GameEventBus();
   const sliceGenerator = options.sliceGenerator ?? new DefaultWorldSliceGenerator();
   const sceneLoaderFactory = options.sceneLoaderFactory ?? createDefaultWorldSceneLoader;
   const audioRuntime = options.audioRuntime ?? createWorldAudioRuntime();
-  const platformSignals = readBrowserPlatformSignals();
+  const shouldEnforceBrowserSupportBaseline =
+    options.browserEnvironmentCapabilities !== undefined ||
+    options.platformSignals !== undefined ||
+    (options.sceneLoader === undefined && options.sceneLoaderFactory === undefined);
+  const platformSignals =
+    options.platformSignals ??
+    (shouldEnforceBrowserSupportBaseline ? readBrowserPlatformSignals() : DEFAULT_INJECTED_LOADER_PLATFORM_SIGNALS);
+  const browserEnvironmentCapabilities =
+    options.browserEnvironmentCapabilities ??
+    readBrowserEnvironmentCapabilities({
+      includeWebgl2Probe: shouldEnforceBrowserSupportBaseline
+    });
+  const capabilityDefaults = options.capabilityDefaults ?? resolveCapabilityDefaultPlayerSettings(platformSignals);
   const clock = options.clock ?? (() => new Date().toISOString());
   const now = options.now ?? getDefaultNow;
   const appStartedAtMs = now();
   const { hudHost, renderHost, shellHost } = createAppHosts(options.host);
+  const resolveCurrentBrowserSupport = (): BrowserSupportSnapshot => {
+    const audioTelemetry = audioRuntime.getTelemetry();
+
+    return resolveBrowserSupportSnapshot({
+      audioSupport: {
+        available: audioTelemetry.available,
+        unlockState: audioTelemetry.unlockState
+      },
+      capabilityDefaults,
+      environmentCapabilities: browserEnvironmentCapabilities,
+      signals: platformSignals,
+      storageAvailable: settingsRepository.getStorageAvailability?.() !== "unavailable"
+    });
+  };
+  let currentBrowserSupport = resolveCurrentBrowserSupport();
   const screen = new LocationEntryScreen({
-     host: shellHost,
-     onSubmit: handleSubmit,
+      host: shellHost,
+      onSubmit: handleSubmit,
      onEdit: handleEdit,
      onApplySettings: handleApplySettings,
      onReplay: handleReplay,
@@ -205,10 +290,11 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   let latestHeatSnapshot: HeatRuntimeSnapshot | null = null;
   let latestRunOutcomeSnapshot: RunOutcomeSnapshot | null = null;
   let shellHiddenInWorldReady = false;
+  const savedSettings = settingsRepository.load();
 
   let state = createInitialSessionState({
     capabilityDefaults,
-    savedSettings: settingsRepository.load()
+    savedSettings
   });
   let pendingWork = Promise.resolve();
   let activeLoadId = 0;
@@ -224,6 +310,8 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   let activeAudioCanvas: HTMLCanvasElement | null = null;
   let lastChaosRecentEvents: string[] = [];
 
+  currentBrowserSupport = resolveCurrentBrowserSupport();
+
   const clearLoadTelemetry = (): void => {
     delete renderHost.dataset.worldManifestDurationMs;
     delete renderHost.dataset.worldManifestReadyAtMs;
@@ -236,25 +324,43 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   const emitShellReadyTelemetry = (): void => {
     const shellReadyAtMs = now() - appStartedAtMs;
 
+    currentBrowserSupport = resolveCurrentBrowserSupport();
+    applyBrowserSupportDataset(renderHost, currentBrowserSupport);
     renderHost.dataset.shellReadyAtMs = formatTelemetryMs(shellReadyAtMs);
     eventBus.emit({
       type: "app.shell.ready",
+      browserSupport: currentBrowserSupport,
       durationMs: shellReadyAtMs,
       phase: "location-select"
     });
     logger.info("app.shell.ready", {
+      browserSupport: currentBrowserSupport,
       durationMs: shellReadyAtMs,
       phase: "location-select"
     });
   };
 
   const render = (): void => {
-    screen.render(state);
+    applyBrowserSupportDataset(renderHost, currentBrowserSupport);
+    screen.render(state, currentBrowserSupport);
     shellHost.hidden = state.phase === "world-ready" && shellHiddenInWorldReady;
     renderHost.dataset.phase = state.phase;
     navigationHud.setVisible(state.phase === "world-ready");
     combatHud.setVisible(state.phase === "world-ready");
     heatHud?.setVisible(state.phase === "world-ready");
+  };
+
+  const refreshBrowserSupport = (shouldRender: boolean): void => {
+    currentBrowserSupport = resolveCurrentBrowserSupport();
+    applyBrowserSupportDataset(renderHost, currentBrowserSupport);
+
+    if (activeAudioCanvas !== null) {
+      applyBrowserSupportDataset(activeAudioCanvas, currentBrowserSupport);
+    }
+
+    if (shouldRender) {
+      render();
+    }
   };
 
   const writeAudioTelemetryToCanvas = (telemetry: WorldAudioTelemetry): void => {
@@ -288,6 +394,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     activeAudioCanvas = canvas;
     lastChaosRecentEvents = parseRecentEventTypes(canvas.dataset.chaosRecentEvents);
     syncAudioWorldStateFromCanvas(canvas, state.phase === "world-ready");
+    applyBrowserSupportDataset(canvas, currentBrowserSupport);
 
     if (typeof MutationObserver !== "function") {
       return;
@@ -341,6 +448,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
 
   removeAudioTelemetrySubscription = audioRuntime.onTelemetryChanged((telemetry) => {
     writeAudioTelemetryToCanvas(telemetry);
+    refreshBrowserSupport(false);
   });
 
   const handleShellVisibilityShortcut = (event: KeyboardEvent): void => {
@@ -453,13 +561,17 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     const completedAtMs = now();
     const durationMs = completedAtMs - startedAtMs;
 
+    currentBrowserSupport = resolveCurrentBrowserSupport();
+    applyBrowserSupportDataset(renderHost, currentBrowserSupport);
     eventBus.emit({
       type: "world.load.failed",
+      browserSupport: currentBrowserSupport,
       request,
       failure,
       durationMs
     });
     logger.error("world.load.failed", {
+      browserSupport: currentBrowserSupport,
       code: failure.code,
       stage: failure.stage,
       placeName: failure.placeName,
@@ -484,6 +596,18 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
       startedAtMs: now(),
       loadId: ++activeLoadId
     };
+  };
+
+  const ensureSupportedBrowserOrFail = (request: WorldGenerationRequest, startedAtMs: number): boolean => {
+    currentBrowserSupport = resolveCurrentBrowserSupport();
+    applyBrowserSupportDataset(renderHost, currentBrowserSupport);
+
+    if (!shouldEnforceBrowserSupportBaseline || getBlockingBrowserSupportReason(currentBrowserSupport) === null) {
+      return true;
+    }
+
+    emitLoadFailure(request, createUnsupportedBrowserLoadFailure(request, currentBrowserSupport), startedAtMs);
+    return false;
   };
 
   const emitManifestReady = (
@@ -533,6 +657,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
       const activeSceneLoader = await getSceneLoader();
 
       worldScene = await activeSceneLoader.load({
+        browserSupport: currentBrowserSupport,
         renderHost,
         manifest,
         replaySelection,
@@ -590,12 +715,14 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
 
       eventBus.emit({
         type: "world.scene.ready",
+        browserSupport: currentBrowserSupport,
         request,
         manifest,
         durationMs: readyDurationMs,
         readinessMilestone: "controllable-vehicle"
       });
       logger.info("world.scene.ready", {
+        browserSupport: currentBrowserSupport,
         placeName: request.location.placeName,
         sliceId: manifest.sliceId,
         durationMs: readyDurationMs,
@@ -651,6 +778,10 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   ): Promise<void> => {
     const { startedAtMs, loadId } = beginLoadAttempt();
 
+    if (!ensureSupportedBrowserOrFail(request, startedAtMs)) {
+      return;
+    }
+
     eventBus.emit({ type: "world.generation.started", request });
     logger.info("world.generation.started", {
       placeName: request.location.placeName,
@@ -684,6 +815,10 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     replaySelection: ReplaySelection | null
   ): Promise<void> => {
     const { startedAtMs, loadId } = beginLoadAttempt();
+
+    if (!ensureSupportedBrowserOrFail(request, startedAtMs)) {
+      return;
+    }
 
     emitManifestReady(request, cachedWorldLoadData.manifest, cachedWorldLoadData.spawnCandidate, startedAtMs);
     await loadWorldScene(
@@ -811,8 +946,12 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
         type: "settings.applied",
         savedSettings: state.currentSettings
       });
+      refreshBrowserSupport(false);
       render();
+      return;
     }
+
+    refreshBrowserSupport(true);
   }
 
   function handleApplySettings(): void {

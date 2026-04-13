@@ -1,10 +1,12 @@
 export type WorldLoadFailureCode =
+  | "UNSUPPORTED_BROWSER"
   | "WORLD_GENERATION_FAILED"
   | "WORLD_SCENE_LOAD_FAILED"
   | "STARTER_VEHICLE_SPAWN_FAILED"
   | "STARTER_VEHICLE_POSSESSION_FAILED";
 
 export type WorldLoadFailureStage =
+  | "browser-support"
   | "world-generating"
   | "world-loading"
   | "vehicle-spawning"

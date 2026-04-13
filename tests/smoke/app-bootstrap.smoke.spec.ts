@@ -2,6 +2,7 @@ import { createGameApp } from "../../src/app/bootstrap/create-game-app";
 import type { WorldAudioRuntime, WorldAudioTelemetry } from "../../src/audio/world-audio-runtime";
 import { GameEventBus } from "../../src/app/events/game-events";
 import type { PlayerSettings } from "../../src/app/config/settings-schema";
+import { createLogger, type LogEntry } from "../../src/app/logging/logger";
 import type { WorldSceneLoader } from "../../src/rendering/scene/create-world-scene";
 import type { WorldNavigationSnapshot } from "../../src/rendering/scene/world-scene-runtime";
 import type { SliceManifest, SpawnCandidate } from "../../src/world/chunks/slice-manifest";
@@ -541,6 +542,213 @@ describe("app bootstrap smoke", () => {
     await app.whenIdle();
 
     expect(combatHud.classList.contains("world-combat-hud--impact")).toBe(false);
+  });
+
+  it("surfaces degraded browser support through shell copy, datasets, and typed ready telemetry", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const eventBus = new GameEventBus();
+    const logEntries: LogEntry[] = [];
+    const browserSupportIssues = [
+      "browser-family-concessions",
+      "audio-blocked",
+      "storage-unavailable",
+      "request-idle-callback-unavailable"
+    ];
+    let shellSupportTier: string | null = null;
+    let sceneSupportTier: string | null = null;
+    let sceneSupportIssues: string[] = [];
+    const audioTelemetry: WorldAudioTelemetry = {
+      ambienceEnabled: true,
+      available: true,
+      cueCount: 0,
+      lastCue: "none",
+      mood: "inactive",
+      profile: "medium",
+      unlockState: "blocked",
+      vehiclePresence: "none"
+    };
+    const audioRuntime: WorldAudioRuntime = {
+      dispose: vi.fn(),
+      getTelemetry: () => audioTelemetry,
+      handleChaosEventTypes: vi.fn(),
+      handleCombatEvents: vi.fn(),
+      handleHeat: vi.fn(),
+      onTelemetryChanged: () => () => {},
+      resetWorld: vi.fn(),
+      setPolishProfile: vi.fn(),
+      setWorldState: vi.fn(),
+      unlock: vi.fn(async () => undefined)
+    };
+    const settingsRepository: PlayerSettingsRepository = {
+      getStorageAvailability: () => "unavailable",
+      load: () => null,
+      save: () => false
+    } as PlayerSettingsRepository;
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => ({
+        ok: true,
+        manifest,
+        spawnCandidate: manifest.spawnCandidates[0]
+      })
+    };
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ browserSupport, renderHost }) => {
+        expect(browserSupport).toMatchObject({
+          issues: browserSupportIssues,
+          supportTier: "degraded"
+        });
+
+        const canvas = document.createElement("canvas");
+
+        renderHost.replaceChildren(canvas);
+
+        return {
+          canvas,
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+
+    eventBus.on("app.shell.ready", (event) => {
+      shellSupportTier = event.browserSupport.supportTier;
+    });
+    eventBus.on("world.scene.ready", (event) => {
+      sceneSupportTier = event.browserSupport.supportTier;
+      sceneSupportIssues = event.browserSupport.issues;
+    });
+
+    const app = await createGameApp({
+      audioRuntime,
+      browserEnvironmentCapabilities: {
+        mutationObserver: true,
+        performanceNow: true,
+        requestIdleCallback: false,
+        webgl2: true
+      },
+      eventBus,
+      host,
+      logger: createLogger((entry) => {
+        logEntries.push(entry);
+      }),
+      platformSignals: {
+        browserFamily: "firefox",
+        deviceMemoryGiB: 16,
+        hardwareConcurrency: 16
+      },
+      sceneLoader,
+      settingsRepository,
+      sliceGenerator
+    });
+    const renderHost = host.querySelector('[data-testid="render-host"]') as HTMLDivElement;
+
+    expect(host.textContent).toContain("Browser support: degraded");
+    expect(renderHost.dataset.browserSupportTier).toBe("degraded");
+    expect(renderHost.dataset.browserSupportIssues).toBe(browserSupportIssues.join(","));
+
+    const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await app.whenIdle();
+
+    const canvas = host.querySelector("canvas") as HTMLCanvasElement;
+
+    expect(canvas.dataset.browserSupportTier).toBe("degraded");
+    expect(canvas.dataset.browserSupportIssues).toBe(browserSupportIssues.join(","));
+    expect(shellSupportTier).toBe("degraded");
+    expect(sceneSupportTier).toBe("degraded");
+    expect(sceneSupportIssues).toEqual(browserSupportIssues);
+    expect(logEntries.find((entry) => entry.eventName === "app.shell.ready")?.context).toMatchObject({
+      browserSupport: {
+        supportTier: "degraded"
+      }
+    });
+    expect(logEntries.find((entry) => entry.eventName === "world.scene.ready")?.context).toMatchObject({
+      browserSupport: {
+        supportTier: "degraded"
+      }
+    });
+  });
+
+  it("fails soft with supported-browser guidance when the baseline browser support is unsupported", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const eventBus = new GameEventBus();
+    let failureCode: string | null = null;
+    let failureReason: string | null = null;
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: vi.fn(async () => ({
+        ok: true as const,
+        manifest,
+        spawnCandidate: manifest.spawnCandidates[0]
+      }))
+    };
+    const sceneLoader: WorldSceneLoader = {
+      load: vi.fn(async ({ renderHost }) => {
+        const canvas = document.createElement("canvas");
+
+        renderHost.replaceChildren(canvas);
+
+        return {
+          canvas,
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      })
+    };
+
+    eventBus.on("world.load.failed", (event) => {
+      failureCode = event.failure.code;
+      failureReason = String(event.failure.details.reason ?? "");
+      expect(event.browserSupport.supportTier).toBe("unsupported");
+    });
+
+    const app = await createGameApp({
+      browserEnvironmentCapabilities: {
+        mutationObserver: true,
+        performanceNow: true,
+        requestIdleCallback: true,
+        webgl2: false
+      },
+      eventBus,
+      host,
+      platformSignals: {
+        browserFamily: "unknown",
+        deviceMemoryGiB: 8,
+        hardwareConcurrency: 8
+      },
+      sceneLoader,
+      sliceGenerator
+    });
+    const renderHost = host.querySelector('[data-testid="render-host"]') as HTMLDivElement;
+    const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    await app.whenIdle();
+
+    expect(app.getSnapshot().phase).toBe("world-load-error");
+    expect(app.getSnapshot().error).toMatchObject({
+      code: "UNSUPPORTED_BROWSER",
+      stage: "browser-support"
+    });
+    expect(host.textContent).toContain("supported desktop browser");
+    expect(host.textContent).toContain("WebGL2");
+    expect(renderHost.dataset.browserSupportTier).toBe("unsupported");
+    expect(Number(renderHost.dataset.worldLoadFailedAtMs ?? "0")).toBeGreaterThan(0);
+    expect(sliceGenerator.generate).not.toHaveBeenCalled();
+    expect(sceneLoader.load).not.toHaveBeenCalled();
+    expect(failureCode).toBe("UNSUPPORTED_BROWSER");
+    expect(failureReason).toBe("webgl2-unavailable");
   });
 
   it("keeps the controllable-vehicle baseline and possession indicator coherent across restart", async () => {

@@ -16,6 +16,7 @@ import {
   type TrafficDensity,
   type WorldSize
 } from "../../app/config/settings-schema";
+import type { BrowserSupportIssue, BrowserSupportSnapshot } from "../../app/config/platform";
 import type { SessionState } from "../../app/state/session-state-machine";
 
 interface LocationEntryScreenOptions {
@@ -71,6 +72,52 @@ function formatSettingLabel(value: string): string {
     .join(" ");
 }
 
+function formatBrowserSupportIssue(issue: BrowserSupportIssue): string {
+  switch (issue) {
+    case "audio-blocked":
+      return "audio unlock is blocked";
+
+    case "audio-unavailable":
+      return "audio is unavailable";
+
+    case "browser-family-concessions":
+      return "conservative browser defaults are active";
+
+    case "mutation-observer-unavailable":
+      return "mutation observers are unavailable";
+
+    case "performance-now-unavailable":
+      return "high-resolution timing is unavailable";
+
+    case "request-idle-callback-unavailable":
+      return "idle callbacks are unavailable";
+
+    case "storage-unavailable":
+      return "settings storage is unavailable";
+
+    case "unsupported-browser-family":
+      return "this browser family is outside the supported desktop set";
+
+    case "webgl2-unavailable":
+      return "WebGL2 is unavailable";
+
+    default:
+      return issue;
+  }
+}
+
+function formatBrowserSupportMessage(browserSupport: BrowserSupportSnapshot): string {
+  if (browserSupport.supportTier === "unsupported") {
+    return "Browser support: unsupported. Use a supported desktop browser with WebGL2 on Chromium, Firefox, or Safari/WebKit.";
+  }
+
+  if (browserSupport.supportTier === "degraded") {
+    return `Browser support: degraded. ${browserSupport.issues.map(formatBrowserSupportIssue).join(". ")}.`;
+  }
+
+  return `Browser support: supported on ${browserSupport.browserFamily}.`;
+}
+
 function renderWorldSizeButtons(selected: WorldSize, disabled: boolean): string {
   return WORLD_SIZE_OPTIONS.map(
     (option) => `
@@ -119,7 +166,7 @@ export class LocationEntryScreen {
     this.onToggleSettings = options.onToggleSettings;
   }
 
-  render(state: SessionState): void {
+  render(state: SessionState, browserSupport: BrowserSupportSnapshot): void {
     const isResolving = state.phase === "location-resolving";
     const isGenerating = state.phase === "world-generation-requested" || state.phase === "world-generating";
     const isRestarting = state.phase === "world-restarting";
@@ -167,6 +214,7 @@ export class LocationEntryScreen {
     const showRestart = isReady;
     const showRetry = isRecoverableLoadError;
     const settingsSummary = `World size ${formatSettingLabel(state.currentSettings.worldSize)}. Graphics ${formatSettingLabel(state.currentSettings.graphicsPreset)}. Traffic ${formatSettingLabel(state.currentSettings.trafficDensity)}. Pedestrians ${formatSettingLabel(state.currentSettings.pedestrianDensity)}.`;
+    const browserSupportMessage = formatBrowserSupportMessage(browserSupport);
     const settingsApplyCopy =
       state.activeWorldSettings === null
         ? "These launch presets apply when you start the next run."
@@ -181,6 +229,7 @@ export class LocationEntryScreen {
             <p class="eyebrow">Session Setup</p>
             <h1 id="location-shell-title">Enter a real-world location</h1>
             <p class="supporting-copy">Use a city, neighborhood, landmark, or address to start a new session.</p>
+            <p class="field-hint" data-testid="browser-support-status" data-support-tier="${escapeHtml(browserSupport.supportTier)}">${escapeHtml(browserSupportMessage)}</p>
           </div>
           <section class="launch-settings" aria-label="Launch settings">
             <div class="launch-settings__copy">
