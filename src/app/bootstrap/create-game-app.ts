@@ -12,6 +12,7 @@ import {
   type PlatformSignalSnapshot
 } from "../config/platform";
 import { createSceneBrowserSupportTelemetry } from "../config/browser-support-telemetry";
+import { applyReleaseMetadataDataset, type ReleaseMetadata } from "../config/release-metadata";
 import type { ReplaySelection } from "../config/replay-options";
 import type { PlayerSettings } from "../config/settings-schema";
 import { createLogger, type Logger } from "../logging/logger";
@@ -63,6 +64,7 @@ export interface CreateGameAppOptions {
   clock?: () => string;
   now?: () => number;
   platformSignals?: PlatformSignalSnapshot;
+  reloadPage?: () => void;
 }
 
 export interface GameApp {
@@ -120,7 +122,33 @@ function createUnexpectedResolveFailure(query: string): LocationResolveFailure {
   };
 }
 
+function isPublicBuildRecoveryError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+
+  return /chunkloaderror|failed to fetch dynamically imported module|importing a module script failed|unable to preload/i.test(
+    message.toLowerCase()
+  );
+}
+
+function createPublicBuildRecoveryFailure(placeName: string, error: unknown): WorldLoadFailure {
+  return createWorldLoadFailure(
+    "WORLD_SCENE_LOAD_FAILED",
+    "world-loading",
+    "A newer public build is available. Reload the page to update and try again.",
+    placeName,
+    {
+      error: error instanceof Error ? error.message : String(error ?? "unknown"),
+      recoveryAction: "reload",
+      recoveryReason: "public-build-updated"
+    }
+  );
+}
+
 function createSceneLoadFailure(request: WorldGenerationRequest, error: unknown): WorldLoadFailure {
+  if (isPublicBuildRecoveryError(error)) {
+    return createPublicBuildRecoveryFailure(request.location.placeName, error);
+  }
+
   if (isWorldSceneRuntimeError(error)) {
     return createWorldLoadFailure(
       error.failureCode,
@@ -234,7 +262,9 @@ interface CachedWorldLoadData {
 
 export async function createGameApp(options: CreateGameAppOptions): Promise<GameApp> {
   const logger = options.logger ?? createLogger();
+  const releaseMetadata: ReleaseMetadata = __GT_RELEASE_METADATA__;
   const resolver = options.resolver ?? new LocationResolver();
+  const reloadPage = options.reloadPage ?? (() => window.location.reload());
   const scheduleBackgroundTask = options.scheduleBackgroundTask ?? scheduleDefaultBackgroundTask;
   const settingsRepository = options.settingsRepository ?? new LocalStoragePlayerSettingsRepository();
   const eventBus = options.eventBus ?? new GameEventBus();
@@ -274,16 +304,18 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   };
   let currentBrowserSupport = resolveCurrentBrowserSupport();
   const screen = new LocationEntryScreen({
-      host: shellHost,
-      onSubmit: handleSubmit,
-     onEdit: handleEdit,
-     onApplySettings: handleApplySettings,
-     onReplay: handleReplay,
-     onRestart: handleRestart,
-     onRetry: handleRetry,
-     onSettingsChange: handleSettingsChange,
-     onToggleSettings: handleToggleSettings
-   });
+    host: shellHost,
+    onSubmit: handleSubmit,
+    onEdit: handleEdit,
+    onApplySettings: handleApplySettings,
+    onReplay: handleReplay,
+    onReloadPublicBuild: handleReloadPublicBuild,
+    onRestart: handleRestart,
+    onRetry: handleRetry,
+    onSettingsChange: handleSettingsChange,
+    onToggleSettings: handleToggleSettings,
+    releaseMetadata
+  });
   const navigationHud = new WorldNavigationHud({ host: hudHost });
   const combatHud = new WorldCombatHud({ host: hudHost });
   let heatHud: WorldHeatHud | null = null;
@@ -319,6 +351,8 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     delete renderHost.dataset.worldSceneReadyAtMs;
     delete renderHost.dataset.worldLoadFailedAtMs;
     delete renderHost.dataset.worldLoadFailedDurationMs;
+    delete renderHost.dataset.recoveryAction;
+    delete renderHost.dataset.recoveryReason;
   };
 
   const emitShellReadyTelemetry = (): void => {
@@ -342,6 +376,8 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
 
   const render = (): void => {
     applyBrowserSupportDataset(renderHost, currentBrowserSupport);
+    applyReleaseMetadataDataset(renderHost, releaseMetadata);
+    applyReleaseMetadataDataset(shellHost, releaseMetadata);
     screen.render(state, currentBrowserSupport);
     shellHost.hidden = state.phase === "world-ready" && shellHiddenInWorldReady;
     renderHost.dataset.phase = state.phase;
@@ -356,6 +392,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
 
     if (activeAudioCanvas !== null) {
       applyBrowserSupportDataset(activeAudioCanvas, currentBrowserSupport);
+      applyReleaseMetadataDataset(activeAudioCanvas, releaseMetadata);
     }
 
     if (shouldRender) {
@@ -395,6 +432,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     lastChaosRecentEvents = parseRecentEventTypes(canvas.dataset.chaosRecentEvents);
     syncAudioWorldStateFromCanvas(canvas, state.phase === "world-ready");
     applyBrowserSupportDataset(canvas, currentBrowserSupport);
+    applyReleaseMetadataDataset(canvas, releaseMetadata);
 
     if (typeof MutationObserver !== "function") {
       return;
@@ -466,6 +504,17 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
   };
 
   window.addEventListener("keydown", handleShellVisibilityShortcut);
+
+  const handlePreloadError = (event: Event & { payload?: unknown }): void => {
+    if (!options.host.isConnected) {
+      return;
+    }
+
+    event.preventDefault();
+    enterPublicBuildRecovery(event.payload);
+  };
+
+  window.addEventListener("vite:preloadError", handlePreloadError as EventListener);
 
   const handleAudioUnlockGesture = (): void => {
     void audioRuntime.unlock();
@@ -580,6 +629,12 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     });
     renderHost.dataset.worldLoadFailedAtMs = formatTelemetryMs(completedAtMs - appStartedAtMs);
     renderHost.dataset.worldLoadFailedDurationMs = formatTelemetryMs(durationMs);
+    if (typeof failure.details.recoveryAction === "string") {
+      renderHost.dataset.recoveryAction = failure.details.recoveryAction;
+    }
+    if (typeof failure.details.recoveryReason === "string") {
+      renderHost.dataset.recoveryReason = failure.details.recoveryReason;
+    }
 
     disposeWorldScene();
     state = transitionSessionState(state, {
@@ -871,6 +926,27 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
     render();
   };
 
+  const enterPublicBuildRecovery = (error: unknown): void => {
+    const failure = createPublicBuildRecoveryFailure(state.sessionIdentity?.placeName ?? "", error);
+
+    if (state.handoff !== null) {
+      emitLoadFailure(state.handoff, failure, now());
+      return;
+    }
+
+    clearLoadTelemetry();
+    renderHost.dataset.worldLoadFailedAtMs = formatTelemetryMs(now() - appStartedAtMs);
+    renderHost.dataset.worldLoadFailedDurationMs = formatTelemetryMs(0);
+    renderHost.dataset.recoveryAction = "reload";
+    renderHost.dataset.recoveryReason = "public-build-updated";
+    disposeWorldScene();
+    state = transitionSessionState(state, {
+      type: "world.load.failed",
+      failure
+    });
+    render();
+  };
+
   function handleEdit(): void {
     activeLoadId += 1;
     disposeWorldScene();
@@ -901,6 +977,10 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
 
   function handleRestart(): void {
     requestCachedRestart(null);
+  }
+
+  function handleReloadPublicBuild(): void {
+    reloadPage();
   }
 
   function handleReplay(selection: ReplaySelection): void {
@@ -1028,6 +1108,7 @@ export async function createGameApp(options: CreateGameAppOptions): Promise<Game
         window.removeEventListener("keydown", handleShellVisibilityShortcut);
         window.removeEventListener("keydown", handleAudioUnlockGesture);
         window.removeEventListener("keydown", handleQuickRestartShortcut);
+        window.removeEventListener("vite:preloadError", handlePreloadError as EventListener);
         disposeWorldScene();
         audioRuntime.dispose();
         options.host.innerHTML = "";

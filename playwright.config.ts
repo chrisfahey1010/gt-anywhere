@@ -1,16 +1,29 @@
 import { defineConfig, devices } from "@playwright/test";
 
+function normalizePublicBasePath(value: string | undefined): string {
+  if (!value || value === "/") {
+    return "/";
+  }
+
+  const withLeadingSlash = value.startsWith("/") ? value : `/${value}`;
+
+  return withLeadingSlash.endsWith("/") ? withLeadingSlash : `${withLeadingSlash}/`;
+}
+
+const publicBasePath = normalizePublicBasePath(process.env.GT_PUBLIC_BASE);
+const baseURL = new URL(publicBasePath, "http://127.0.0.1:4173").toString();
+
 export default defineConfig({
   testDir: "./tests/smoke",
   testMatch: /.*\.pw\.spec\.ts$/,
   fullyParallel: true,
   reporter: "list",
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL,
     trace: "on-first-retry"
   },
   webServer: {
-    command: "npm run preview -- --host 127.0.0.1 --port 4173",
+    command: "node ./scripts/preview-dist.mjs",
     port: 4173,
     reuseExistingServer: false,
     timeout: 120000

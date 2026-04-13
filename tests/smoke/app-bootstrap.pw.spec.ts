@@ -4,21 +4,40 @@ import {
   validLocationAliasQuery
 } from "../fixtures/location-queries";
 
+function normalizePublicBasePath(value: string | undefined): string {
+  if (!value || value === "/") {
+    return "/";
+  }
+
+  const withLeadingSlash = value.startsWith("/") ? value : `/${value}`;
+
+  return withLeadingSlash.endsWith("/") ? withLeadingSlash : `${withLeadingSlash}/`;
+}
+
+function resolvePublicPath(relativePath: string): string {
+  const publicBasePath = normalizePublicBasePath(process?.env.GT_PUBLIC_BASE);
+  const normalizedRelativePath = relativePath.replace(/^\/+/, "");
+
+  return publicBasePath === "/" ? `/${normalizedRelativePath}` : `${publicBasePath}${normalizedRelativePath}`;
+}
+
 test("boots to the location shell and reaches a slice-ready world after a valid submission", async ({
   page,
   browserName
 }) => {
   const requestCounts = new Map<string, number>();
+  const presetsPath = resolvePublicPath("data/world-gen/location-presets.json");
+  const tuningPathPrefix = resolvePublicPath("data/tuning/");
 
   page.on("requestfinished", (request) => {
     const { pathname } = new URL(request.url());
 
-    if (pathname === "/data/world-gen/location-presets.json" || pathname.startsWith("/data/tuning/")) {
+    if (pathname === presetsPath || pathname.startsWith(tuningPathPrefix)) {
       requestCounts.set(pathname, (requestCounts.get(pathname) ?? 0) + 1);
     }
   });
 
-  await page.goto("/");
+  await page.goto("./");
 
   await expect(page.getByRole("heading", { name: "Enter a real-world location" })).toBeVisible();
 
@@ -29,6 +48,22 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
   await expect(renderHost).toHaveAttribute("data-browser-support-tier", /supported|degraded/);
   await expect(renderHost).toHaveAttribute("data-browser-webgl2-available", "true");
   await expect(renderHost).toHaveAttribute("data-shell-ready-at-ms", /\d+\.\d+/);
+  await expect(renderHost).toHaveAttribute("data-app-name", "GT Anywhere");
+  await expect(renderHost).toHaveAttribute("data-app-version", /\d+\.\d+\.\d+/);
+
+  const appVersion = await renderHost.getAttribute("data-app-version");
+
+  expect(appVersion).toMatch(/\d+\.\d+\.\d+/);
+
+  if (!appVersion) {
+    throw new Error("Expected release metadata app version to be present.");
+  }
+
+  await expect(renderHost).toHaveAttribute(
+    "data-release-id",
+    new RegExp(appVersion.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  );
+  await expect(page.getByTestId("release-build-info")).toContainText(appVersion);
 
   await locationInput.fill(validLocationAliasQuery);
   await locationInput.press("Enter");
@@ -40,6 +75,12 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
   await expect(canvas).toHaveAttribute("data-browser-support-tier", /supported|degraded/);
   await expect(canvas).toHaveAttribute("data-browser-webgl2-available", "true");
   await expect(canvas).toHaveAttribute("data-graphics-browser-family", browserName);
+  await expect(canvas).toHaveAttribute("data-app-name", "GT Anywhere");
+  await expect(canvas).toHaveAttribute("data-app-version", appVersion);
+  await expect(canvas).toHaveAttribute(
+    "data-release-id",
+    new RegExp(appVersion.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  );
   await expect(canvas).toHaveAttribute("data-ready-milestone", "controllable-vehicle", { timeout: 15000 });
   await expect(canvas).toHaveAttribute("data-graphics-fog-density", /\d+\.\d{4}/);
   await expect(canvas).toHaveAttribute("data-visual-palette-sky-color", /#[0-9a-f]{6}/i);
@@ -64,9 +105,9 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
   const shellReadyAtMs = Number((await renderHost.getAttribute("data-shell-ready-at-ms")) ?? "0");
   const manifestReadyAtMs = Number((await renderHost.getAttribute("data-world-manifest-ready-at-ms")) ?? "0");
   const sceneReadyAtMs = Number((await renderHost.getAttribute("data-world-scene-ready-at-ms")) ?? "0");
-  const initialPresetRequests = requestCounts.get("/data/world-gen/location-presets.json") ?? 0;
+  const initialPresetRequests = requestCounts.get(presetsPath) ?? 0;
   const initialTuningRequests = [...requestCounts.entries()]
-    .filter(([pathname]) => pathname.startsWith("/data/tuning/"))
+    .filter(([pathname]) => pathname.startsWith(tuningPathPrefix))
     .reduce((total, [, count]) => total + count, 0);
 
   expect(initialFpsEstimate).toBeGreaterThan(0);
@@ -117,10 +158,10 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
       }
     )
     .toBeLessThan(0.25);
-  expect(requestCounts.get("/data/world-gen/location-presets.json") ?? 0).toBe(initialPresetRequests);
+  expect(requestCounts.get(presetsPath) ?? 0).toBe(initialPresetRequests);
   expect(
     [...requestCounts.entries()]
-      .filter(([pathname]) => pathname.startsWith("/data/tuning/"))
+      .filter(([pathname]) => pathname.startsWith(tuningPathPrefix))
       .reduce((total, [, count]) => total + count, 0)
   ).toBe(initialTuningRequests);
   expect(Number((await renderHost.getAttribute("data-world-manifest-ready-at-ms")) ?? "0")).toBeGreaterThan(
@@ -144,7 +185,7 @@ test("boots to the location shell and reaches a slice-ready world after a valid 
 });
 
 test("shows a recoverable error for an unresolvable query", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("./");
 
   const locationInput = page.getByTestId("location-input");
 
@@ -157,7 +198,7 @@ test("shows a recoverable error for an unresolvable query", async ({ page }) => 
 });
 
 test("restarts from canvas Backspace but ignores editable Backspace while the player is typing", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("./");
 
   const locationInput = page.getByTestId("location-input");
 
@@ -224,7 +265,7 @@ test("restarts from canvas Backspace but ignores editable Backspace while the pl
 });
 
 test("persists settings across reload and applies density changes on recreated runs", async ({ page, browserName }) => {
-  await page.goto("/");
+  await page.goto("./");
 
   await page.getByTestId("open-settings").click();
   await page.getByTestId("settings-graphics-preset").selectOption("low");

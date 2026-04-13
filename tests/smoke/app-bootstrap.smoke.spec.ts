@@ -675,6 +675,55 @@ describe("app bootstrap smoke", () => {
     });
   });
 
+  it("fails soft with a public-build reload path when a stale lazy chunk is detected", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+
+    const host = document.querySelector("#app") as HTMLElement;
+    const sliceGenerator: WorldSliceGenerator = {
+      generate: async () => ({
+        ok: true,
+        manifest,
+        spawnCandidate: manifest.spawnCandidates[0]
+      })
+    };
+    const sceneLoader: WorldSceneLoader = {
+      load: async ({ renderHost }) => {
+        const canvas = document.createElement("canvas");
+
+        canvas.dataset.readyMilestone = "controllable-vehicle";
+        renderHost.replaceChildren(canvas);
+
+        return {
+          canvas,
+          dispose: () => {
+            renderHost.innerHTML = "";
+          }
+        };
+      }
+    };
+
+    const reloadPage = vi.fn();
+    const app = await createGameApp({ host, reloadPage, sceneLoader, sliceGenerator });
+    const input = host.querySelector('[data-testid="location-input"]') as HTMLInputElement;
+    const form = host.querySelector("form") as HTMLFormElement;
+
+    input.value = validLocationQuery;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await app.whenIdle();
+
+    const staleChunkEvent = new Event("vite:preloadError", { cancelable: true }) as Event & { payload?: unknown };
+    staleChunkEvent.payload = new Error("Failed to fetch dynamically imported module");
+    window.dispatchEvent(staleChunkEvent);
+
+    expect(app.getSnapshot().phase).toBe("world-load-error");
+    expect(host.textContent).toContain("newer public build is available");
+    expect(host.querySelector('[data-testid="reload-public-build"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="retry-load"]')).toBeNull();
+
+    (host.querySelector('[data-testid="reload-public-build"]') as HTMLButtonElement).click();
+    expect(reloadPage).toHaveBeenCalledTimes(1);
+  });
+
   it("fails soft with supported-browser guidance when the baseline browser support is unsupported", async () => {
     document.body.innerHTML = '<div id="app"></div>';
 

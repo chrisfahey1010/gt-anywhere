@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "check": "tsc --noEmit",
     "test": "vitest run",
-    "test:browser": "npm run build && playwright test"
+    "test:browser": "npm run test:browser:root && npm run test:browser:nested-base",
+    "test:browser:root": "npm run build && playwright test",
+    "test:browser:nested-base": "npm run build -- --base=/public-build/ && GT_PUBLIC_BASE=/public-build/ playwright test"
   },
   "dependencies": {
     "@babylonjs/core": "9.1.0",

@@ -17,6 +17,7 @@ import {
   type WorldSize
 } from "../../app/config/settings-schema";
 import type { BrowserSupportIssue, BrowserSupportSnapshot } from "../../app/config/platform";
+import { formatReleaseBuildLabel, type ReleaseMetadata } from "../../app/config/release-metadata";
 import type { SessionState } from "../../app/state/session-state-machine";
 
 interface LocationEntryScreenOptions {
@@ -25,10 +26,12 @@ interface LocationEntryScreenOptions {
   onSubmit(query: string): void;
   onEdit(): void;
   onReplay(selection: ReplaySelection): void;
+  onReloadPublicBuild(): void;
   onRestart(): void;
   onRetry(): void;
   onSettingsChange(changes: Partial<PlayerSettings>): void;
   onToggleSettings(): void;
+  releaseMetadata: ReleaseMetadata;
 }
 
 function escapeHtml(value: string): string {
@@ -118,6 +121,15 @@ function formatBrowserSupportMessage(browserSupport: BrowserSupportSnapshot): st
   return `Browser support: supported on ${browserSupport.browserFamily}.`;
 }
 
+function isReloadRecoveryState(state: SessionState): boolean {
+  return (
+    state.phase === "world-load-error" &&
+    state.error !== null &&
+    "details" in state.error &&
+    state.error.details.recoveryAction === "reload"
+  );
+}
+
 function renderWorldSizeButtons(selected: WorldSize, disabled: boolean): string {
   return WORLD_SIZE_OPTIONS.map(
     (option) => `
@@ -146,6 +158,8 @@ export class LocationEntryScreen {
 
   private readonly onReplay: (selection: ReplaySelection) => void;
 
+  private readonly onReloadPublicBuild: () => void;
+
   private readonly onRestart: () => void;
 
   private readonly onRetry: () => void;
@@ -154,16 +168,20 @@ export class LocationEntryScreen {
 
   private readonly onToggleSettings: () => void;
 
+  private readonly releaseMetadata: ReleaseMetadata;
+
   constructor(options: LocationEntryScreenOptions) {
     this.host = options.host;
     this.onApplySettings = options.onApplySettings;
     this.onSubmit = options.onSubmit;
     this.onEdit = options.onEdit;
     this.onReplay = options.onReplay;
+    this.onReloadPublicBuild = options.onReloadPublicBuild;
     this.onRestart = options.onRestart;
     this.onRetry = options.onRetry;
     this.onSettingsChange = options.onSettingsChange;
     this.onToggleSettings = options.onToggleSettings;
+    this.releaseMetadata = options.releaseMetadata;
   }
 
   render(state: SessionState, browserSupport: BrowserSupportSnapshot): void {
@@ -174,6 +192,7 @@ export class LocationEntryScreen {
     const isBusy = isResolving || isGenerating || isRestarting || isLoading;
     const isReady = state.phase === "world-ready";
     const isRecoverableLoadError = state.phase === "world-load-error";
+    const isReloadRecovery = isReloadRecoveryState(state);
     const disableInput = isBusy;
     const placeName = state.sessionIdentity?.placeName ?? state.formQuery;
     const replaySelection = state.replaySelection;
@@ -193,8 +212,10 @@ export class LocationEntryScreen {
           ? `Loading slice for ${placeName}...`
           : isReady && placeName && replaySelection
             ? `${replaySelection.label} replay ready for ${placeName}.`
-          : isReady && placeName
-             ? `Slice ready for ${placeName}.`
+            : isReady && placeName
+              ? `Slice ready for ${placeName}.`
+              : isReloadRecovery
+                ? "Public build update required."
             : isRecoverableLoadError && placeName && replaySelection
               ? `${replaySelection.label} replay paused for ${placeName}.`
             : isRecoverableLoadError && placeName
@@ -211,10 +232,12 @@ export class LocationEntryScreen {
           : "Start Session";
     const showEdit = state.phase === "error" || isBusy || isReady || isRecoverableLoadError;
     const showReplayLauncher = isReady;
+    const showReloadPublicBuild = isReloadRecovery;
     const showRestart = isReady;
-    const showRetry = isRecoverableLoadError;
+    const showRetry = isRecoverableLoadError && !isReloadRecovery;
     const settingsSummary = `World size ${formatSettingLabel(state.currentSettings.worldSize)}. Graphics ${formatSettingLabel(state.currentSettings.graphicsPreset)}. Traffic ${formatSettingLabel(state.currentSettings.trafficDensity)}. Pedestrians ${formatSettingLabel(state.currentSettings.pedestrianDensity)}.`;
     const browserSupportMessage = formatBrowserSupportMessage(browserSupport);
+    const releaseBuildLabel = formatReleaseBuildLabel(this.releaseMetadata);
     const settingsApplyCopy =
       state.activeWorldSettings === null
         ? "These launch presets apply when you start the next run."
@@ -230,6 +253,7 @@ export class LocationEntryScreen {
             <h1 id="location-shell-title">Enter a real-world location</h1>
             <p class="supporting-copy">Use a city, neighborhood, landmark, or address to start a new session.</p>
             <p class="field-hint" data-testid="browser-support-status" data-support-tier="${escapeHtml(browserSupport.supportTier)}">${escapeHtml(browserSupportMessage)}</p>
+            <p class="field-hint" data-testid="release-build-info">${escapeHtml(releaseBuildLabel)}</p>
           </div>
           <section class="launch-settings" aria-label="Launch settings">
             <div class="launch-settings__copy">
@@ -293,6 +317,7 @@ export class LocationEntryScreen {
             <div class="action-row">
               <button class="primary-action" type="submit" ${disableInput ? "disabled" : ""}>${submitLabel}</button>
               ${showRestart ? '<button class="secondary-action" type="button" data-testid="restart-from-spawn">Restart from spawn</button>' : ""}
+              ${showReloadPublicBuild ? '<button class="secondary-action" type="button" data-testid="reload-public-build">Reload build</button>' : ""}
               ${showRetry ? '<button class="secondary-action" type="button" data-testid="retry-load">Retry load</button>' : ""}
               ${showEdit ? '<button class="secondary-action" type="button" data-testid="edit-location">Edit location</button>' : ""}
             </div>
@@ -336,6 +361,7 @@ export class LocationEntryScreen {
     const openSettingsButton = this.host.querySelector('[data-testid="open-settings"]');
     const closeSettingsButton = this.host.querySelector('[data-testid="close-settings"]');
     const applySettingsButton = this.host.querySelector('[data-testid="apply-settings"]');
+    const reloadPublicBuildButton = this.host.querySelector('[data-testid="reload-public-build"]');
     const restartButton = this.host.querySelector('[data-testid="restart-from-spawn"]');
     const replayButtons = this.host.querySelectorAll<HTMLButtonElement>("[data-replay-selection-id]");
     const retryButton = this.host.querySelector('[data-testid="retry-load"]');
@@ -373,6 +399,10 @@ export class LocationEntryScreen {
 
     restartButton?.addEventListener("click", () => {
       this.onRestart();
+    });
+
+    reloadPublicBuildButton?.addEventListener("click", () => {
+      this.onReloadPublicBuild();
     });
 
     worldSizeButtons.forEach((button) => {

@@ -11,6 +11,7 @@ import {
 import type { SliceSceneVisualPalette, SpawnCandidate } from "../../world/chunks/slice-manifest";
 import type { PlayerVehicleController, VehicleControlState } from "../controllers/player-vehicle-controller";
 import type { StarterVehicleRuntime } from "./create-starter-vehicle";
+import { resolveVehicleTuningPath } from "../../app/config/runtime-paths";
 
 export interface VehicleTuning {
   name: string;
@@ -63,7 +64,7 @@ export async function loadTuningProfile(vehicleType: string): Promise<VehicleTun
     return cachedTuningProfile;
   }
 
-  const tuningProfilePromise = fetch(`/data/tuning/${vehicleType}.json`)
+  const tuningProfilePromise = fetch(resolveVehicleTuningPath(vehicleType))
     .then(async (response) => {
       if (!response.ok) {
         throw new Error(`Failed to load tuning profile for ${vehicleType}`);

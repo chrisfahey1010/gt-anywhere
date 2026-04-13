@@ -17,6 +17,7 @@ import type { SessionLocationIdentity, WorldGenerationRequest } from "./location
 import { InMemorySliceManifestStore, type SliceManifestStore } from "./slice-manifest-store";
 import { createWorldLoadFailure, type WorldLoadFailure } from "./world-load-failure";
 import { applyRoadDisplayNames } from "./road-display-name";
+import { resolveLocationPresetPath } from "../../app/config/runtime-paths";
 
 interface StoredGeoDataPreset extends GeoDataPreset {
   reuseKey: string;
@@ -392,7 +393,7 @@ export class FetchGeoDataPresetSource implements GeoDataPresetSource {
 
   private presetsPromise: Promise<Map<string, GeoDataPreset>> | null = null;
 
-  constructor(url: string = "/data/world-gen/location-presets.json") {
+  constructor(url: string = resolveLocationPresetPath()) {
     this.url = url;
   }
 
