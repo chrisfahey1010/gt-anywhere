@@ -1,0 +1,29 @@
+version: 1
+project_name: gt-anywhere
+project_type: game
+module: gds
+tracking_mode: guided
+initialized_at: '2026-04-05'
+last_updated: '2026-04-12'
+current_phase: production
+next_workflow: create-story
+next_agent: game-scrum-master
+notes:
+  - brainstorm-game is optional and can be run before create-game-brief
+  - implementation-readiness is recommended before starting production
+  - correct-course approved on 2026-04-12 and routed as a major-scope change to Product Manager / Solution Architect using the sprint change proposal
+
+workflow_status:
+  brainstorm-game: /home/chris/repos/gt-anywhere/_bmad-output/planning-artifacts/brainstorming-session-2026-04-05T23:22:10-07:00.md
+  create-game-brief: /home/chris/repos/gt-anywhere/_bmad-output/planning-artifacts/game-brief.md
+  market-research: /home/chris/repos/gt-anywhere/_bmad-output/planning-artifacts/research/market-browser-based-open-world-games-experiences-built-around-real-world-data-and-location-generation-research-2026-04-06T13:14:03-07:00.md
+  technical-research: /home/chris/repos/gt-anywhere/_bmad-output/planning-artifacts/research/technical-browser-capable-game-engines-and-web-focused-tech-stacks-for-a-high-performance-open-world-driving-game-research-2026-04-06T14:37:48-07:00.md
+  create-gdd: /home/chris/repos/gt-anywhere/_bmad-output/planning-artifacts/gdd.md
+  narrative: null
+  create-ux-design: null
+  create-architecture: /home/chris/repos/gt-anywhere/_bmad-output/planning-artifacts/game-architecture.md
+  create-epics-and-stories: /home/chris/repos/gt-anywhere/_bmad-output/planning-artifacts/epics.md
+  correct-course: /home/chris/repos/gt-anywhere/_bmad-output/planning-artifacts/sprint-change-proposal-2026-04-12T20:50:42-07:00.md
+  generate-project-context: /home/chris/repos/gt-anywhere/_bmad-output/project-context.md
+  sprint-planning: /home/chris/repos/gt-anywhere/_bmad-output/implementation-artifacts/sprint-status.yaml
+  sprint-status: null
