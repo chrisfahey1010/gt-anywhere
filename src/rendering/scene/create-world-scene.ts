@@ -3,21 +3,29 @@ import {
   AbstractMesh,
   Color3,
   Color4,
+  DynamicTexture,
   Engine,
   HavokPlugin,
   HemisphericLight,
-  InstantiatedEntries,
+  Matrix,
   MeshBuilder,
   PhysicsAggregate,
   PhysicsShapeType,
   Scene,
   StandardMaterial,
   TransformNode,
-  Vector3
+  Vector3,
+  Vector4
 } from "@babylonjs/core";
 import { loadAssetRegistry, type AssetEntry, type AssetRegistry } from "./asset-registry";
 import { attachAuthoredVisualToProxy } from "./authored-asset-visual";
-import type { SpawnCandidate, SliceManifest, SliceRoad, SliceWorldEntry } from "../../world/chunks/slice-manifest";
+import type {
+  SpawnCandidate,
+  SliceChunk,
+  SliceManifest,
+  SliceRoad,
+  SliceWorldEntry
+} from "../../world/chunks/slice-manifest";
 import { resolveSceneVisualPalette } from "../../world/chunks/scene-visual-palette";
 import { createOnFootCamera, type OnFootCamera } from "../../sandbox/on-foot/create-on-foot-camera";
 import {
@@ -104,8 +112,11 @@ import {
 
 const AVAILABLE_VEHICLE_TYPES = REPLAY_VEHICLE_TYPES;
 const DEFAULT_VEHICLE_TYPE = AVAILABLE_VEHICLE_TYPES[0];
+const CHUNK_RESIDENCY_LOOKAHEAD_METERS = 96;
+const CHUNK_RESIDENCY_PADDING_METERS = 32;
 const PERFORMANCE_TELEMETRY_SAMPLE_WINDOW = 120;
 const PERFORMANCE_TELEMETRY_UPDATE_INTERVAL = 15;
+const SCENE_TELEMETRY_UPDATE_INTERVAL = 2;
 
 const SCENE_BROWSER_GRAPHICS_ADJUSTMENTS: Record<BrowserFamily, { hardwareScalingMultiplier: number; lightIntensityMultiplier: number }> = {
   chromium: {
@@ -181,6 +192,80 @@ export interface SceneGraphicsPresetProfile {
   lightIntensity: number;
 }
 
+export interface ChunkResidencyCandidate {
+  id: string;
+  origin: Pick<SliceChunk["origin"], "x" | "z">;
+  size: SliceChunk["size"];
+}
+
+function isPointInsideChunk(
+  chunk: ChunkResidencyCandidate,
+  point: { x: number; z: number },
+  paddingMeters: number
+): boolean {
+  return (
+    point.x >= chunk.origin.x - paddingMeters &&
+    point.x <= chunk.origin.x + chunk.size.width + paddingMeters &&
+    point.z >= chunk.origin.z - paddingMeters &&
+    point.z <= chunk.origin.z + chunk.size.depth + paddingMeters
+  );
+}
+
+function getNearestChunkId(
+  chunks: ChunkResidencyCandidate[],
+  position: { x: number; z: number }
+): string | null {
+  let nearestChunkId: string | null = null;
+  let nearestDistanceSquared = Number.POSITIVE_INFINITY;
+
+  for (const chunk of chunks) {
+    const clampedX = Math.min(Math.max(position.x, chunk.origin.x), chunk.origin.x + chunk.size.width);
+    const clampedZ = Math.min(Math.max(position.z, chunk.origin.z), chunk.origin.z + chunk.size.depth);
+    const deltaX = position.x - clampedX;
+    const deltaZ = position.z - clampedZ;
+    const distanceSquared = deltaX * deltaX + deltaZ * deltaZ;
+
+    if (distanceSquared < nearestDistanceSquared) {
+      nearestChunkId = chunk.id;
+      nearestDistanceSquared = distanceSquared;
+    }
+  }
+
+  return nearestChunkId;
+}
+
+export function resolveResidentChunkIds(
+  chunks: ChunkResidencyCandidate[],
+  options: {
+    facingYaw: number;
+    lookAheadMeters?: number;
+    paddingMeters?: number;
+    position: { x: number; z: number };
+  }
+): string[] {
+  const lookAheadMeters = options.lookAheadMeters ?? CHUNK_RESIDENCY_LOOKAHEAD_METERS;
+  const paddingMeters = options.paddingMeters ?? CHUNK_RESIDENCY_PADDING_METERS;
+  const lookAheadPoint = {
+    x: options.position.x + Math.sin(options.facingYaw) * lookAheadMeters,
+    z: options.position.z + Math.cos(options.facingYaw) * lookAheadMeters
+  };
+  const residentChunkIds = chunks
+    .filter(
+      (chunk) =>
+        isPointInsideChunk(chunk, options.position, paddingMeters) ||
+        isPointInsideChunk(chunk, lookAheadPoint, paddingMeters)
+    )
+    .map((chunk) => chunk.id);
+
+  if (residentChunkIds.length > 0) {
+    return residentChunkIds;
+  }
+
+  const nearestChunkId = getNearestChunkId(chunks, options.position);
+
+  return nearestChunkId === null ? [] : [nearestChunkId];
+}
+
 export function resolveSceneStarterVehicleType(
   starterVehicleType?: ReplayStarterVehicleType | null
 ): ReplayStarterVehicleType {
@@ -230,13 +315,37 @@ export interface WorldSceneLoader {
   load(options: CreateWorldSceneOptions): Promise<WorldSceneHandle>;
 }
 
-function buildRoadSegments(
+export function buildRoadSegments(
   scene: Scene,
   parent: TransformNode,
   road: SliceRoad,
-  material: StandardMaterial
+  materials: { road: StandardMaterial; curb: StandardMaterial; intersection: StandardMaterial }
 ): AbstractMesh[] {
   const segments: AbstractMesh[] = [];
+  const curbWidth = 1.0;
+  const curbHeightOffset = 0.05;
+  const roadSurfaceHeight = 0.9;
+  const roadWidth = road.width - curbWidth * 2;
+
+  for (let index = 0; index < road.points.length; index += 1) {
+    const point = road.points[index];
+    if (!point) continue;
+
+    const intersection = MeshBuilder.CreateCylinder(
+      `${road.id}-intersection-${index}`,
+      {
+        diameter: road.width,
+        height: roadSurfaceHeight,
+        tessellation: 12
+      },
+      scene
+    );
+    intersection.position = new Vector3(point.x, roadSurfaceHeight / 2, point.z);
+    intersection.parent = parent;
+    intersection.material = materials.intersection;
+    intersection.checkCollisions = true;
+    segments.push(intersection);
+  }
 
   for (let index = 0; index < road.points.length - 1; index += 1) {
     const start = road.points[index];
@@ -249,23 +358,51 @@ function buildRoadSegments(
     const deltaX = end.x - start.x;
     const deltaZ = end.z - start.z;
     const length = Math.sqrt(deltaX * deltaX + deltaZ * deltaZ);
-    const midpoint = new Vector3((start.x + end.x) / 2, 0.45, (start.z + end.z) / 2);
-    const segment = MeshBuilder.CreateBox(
+    const midpoint = new Vector3((start.x + end.x) / 2, roadSurfaceHeight / 2, (start.z + end.z) / 2);
+    const rotationY = Math.atan2(deltaX, deltaZ);
+
+    const faceUV = new Array(6).fill(new Vector4(0, 0, 1, 1));
+    const textureRepeat = length / 10;
+    faceUV[4] = new Vector4(0, 0, 1, textureRepeat);
+
+    const mainSegment = MeshBuilder.CreateBox(
       `${road.id}-segment-${index}`,
       {
-        width: road.width,
-        height: 0.9,
-        depth: length
+        width: roadWidth,
+        height: roadSurfaceHeight,
+        depth: length,
+        faceUV
       },
       scene
     );
+    mainSegment.position = midpoint;
+    mainSegment.rotation.y = rotationY;
+    mainSegment.parent = parent;
+    mainSegment.material = materials.road;
+    mainSegment.checkCollisions = true;
+    segments.push(mainSegment);
 
-    segment.position = midpoint;
-    segment.rotation.y = Math.atan2(deltaX, deltaZ);
-    segment.parent = parent;
-    segment.material = material;
-    segment.checkCollisions = true;
-    segments.push(segment);
+    const curbOffset = roadWidth / 2 + curbWidth / 2;
+    for (const side of [-1, 1]) {
+      const curb = MeshBuilder.CreateBox(
+        `${road.id}-curb-${side < 0 ? "left" : "right"}-${index}`,
+        {
+          width: curbWidth,
+          height: roadSurfaceHeight + curbHeightOffset,
+          depth: Math.max(0.1, length - road.width)
+        },
+        scene
+      );
+      
+      const curbLocalPos = new Vector3(curbOffset * side, (roadSurfaceHeight + curbHeightOffset) / 2, 0);
+      const curbWorldPos = Vector3.TransformCoordinates(curbLocalPos, Matrix.RotationY(rotationY)).add(new Vector3(midpoint.x, 0, midpoint.z));
+      curb.position = curbWorldPos;
+      curb.rotation.y = rotationY;
+      curb.parent = parent;
+      curb.material = materials.curb;
+      curb.checkCollisions = true;
+      segments.push(curb);
+    }
   }
 
   return segments;
@@ -300,9 +437,9 @@ export function createChunkWorldMassingPlan(
     }));
 }
 
-async function buildChunkMassing(
+export async function buildChunkMassing(
   parent: TransformNode,
-  manifest: SliceManifest,
+  manifest: Pick<SliceManifest, "worldEntries">,
   chunkId: string,
   material: StandardMaterial,
   assetRegistry: AssetRegistry
@@ -314,12 +451,25 @@ async function buildChunkMassing(
 
   for (const entry of massingPlan) {
     const assetEntry: AssetEntry | undefined = entry.assetId ? assetRegistry.world[entry.assetId] : undefined;
+    const uvScaleX = Math.max(1, entry.dimensions.width / 15);
+    const uvScaleY = Math.max(1, entry.dimensions.height / 15);
+    const uvScaleZ = Math.max(1, entry.dimensions.depth / 15);
+    const faceUV = [
+      new Vector4(0, 0, uvScaleX, uvScaleY),
+      new Vector4(0, 0, uvScaleX, uvScaleY),
+      new Vector4(0, 0, uvScaleZ, uvScaleY),
+      new Vector4(0, 0, uvScaleZ, uvScaleY),
+      new Vector4(0, 0, uvScaleX, uvScaleZ),
+      new Vector4(0, 0, uvScaleX, uvScaleZ)
+    ];
+
     const building = MeshBuilder.CreateBox(
       entry.meshName,
       {
         width: entry.dimensions.width,
         depth: entry.dimensions.depth,
-        height: entry.dimensions.height
+        height: entry.dimensions.height,
+        faceUV
       },
       scene
     );
@@ -519,9 +669,30 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     groundMaterial.diffuseColor = Color3.FromHexString(visualPalette.groundColor);
     groundMaterial.specularColor = Color3.Black();
 
+    const roadTexture = new DynamicTexture("road-texture", { width: 256, height: 512 }, scene);
+    const ctx = roadTexture.getContext();
+    ctx.fillStyle = visualPalette.roadColor;
+    ctx.fillRect(0, 0, 256, 512);
+    ctx.strokeStyle = "#E0D070";
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.setLineDash([40, 40]);
+    ctx.moveTo(128, 0);
+    ctx.lineTo(128, 512);
+    ctx.stroke();
+    roadTexture.update();
+
     const roadMaterial = new StandardMaterial("slice-road-material", scene);
-    roadMaterial.diffuseColor = Color3.FromHexString(visualPalette.roadColor);
+    roadMaterial.diffuseTexture = roadTexture;
     roadMaterial.specularColor = Color3.Black();
+
+    const curbMaterial = new StandardMaterial("slice-curb-material", scene);
+    curbMaterial.diffuseColor = Color3.FromHexString(visualPalette.roadColor).scale(1.2);
+    curbMaterial.specularColor = Color3.Black();
+
+    const intersectionMaterial = new StandardMaterial("slice-intersection-material", scene);
+    intersectionMaterial.diffuseColor = Color3.FromHexString(visualPalette.roadColor);
+    intersectionMaterial.specularColor = Color3.Black();
 
     const boundaryMaterial = new StandardMaterial("slice-boundary-material", scene);
     boundaryMaterial.diffuseColor = Color3.FromHexString(visualPalette.boundaryColor);
@@ -529,8 +700,20 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     boundaryMaterial.specularColor = Color3.Black();
 
     const chunkMassingMaterial = new StandardMaterial("chunk-massing-material", scene);
-    chunkMassingMaterial.diffuseColor = Color3.FromHexString(visualPalette.chunkColor);
     chunkMassingMaterial.specularColor = Color3.Black();
+
+    const facadeTexture = new DynamicTexture("facade-texture", { width: 512, height: 512 }, scene);
+    const facadeCtx = facadeTexture.getContext();
+    facadeCtx.fillStyle = visualPalette.chunkColor;
+    facadeCtx.fillRect(0, 0, 512, 512);
+    facadeCtx.fillStyle = "#AACCFF";
+    for (let y = 20; y < 512; y += 60) {
+      for (let x = 20; x < 512; x += 40) {
+        if (Math.random() > 0.2) facadeCtx.fillRect(x, y, 20, 30);
+      }
+    }
+    facadeTexture.update();
+    chunkMassingMaterial.diffuseTexture = facadeTexture;
 
     const ground = MeshBuilder.CreateGround(
       "slice-ground",
@@ -551,9 +734,45 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     const exitBlockingMeshes = buildBoundaryWalls(scene, staticSurfaceRoot, manifest, boundaryMaterial);
     staticPhysicsMeshes.push(...exitBlockingMeshes);
 
-    const chunkRoots: TransformNode[] = [];
+    const chunkRoots = new Map<string, TransformNode>();
+    let residentChunkIds: string[] = [];
 
-    for (const [chunkIndex, chunk] of manifest.chunks.entries()) {
+    const syncChunkResidencyTelemetry = (): void => {
+      if (scene.metadata && typeof scene.metadata === "object") {
+        Object.assign(scene.metadata, {
+          residentChunkCount: residentChunkIds.length,
+          residentChunkIds: [...residentChunkIds]
+        });
+      }
+
+      canvas.dataset.residentChunkCount = String(residentChunkIds.length);
+      canvas.dataset.residentChunkIds = residentChunkIds.join(",");
+    };
+
+    const updateChunkResidency = (position: { x: number; z: number }, facingYaw: number): void => {
+      const nextResidentChunkIds = resolveResidentChunkIds(manifest.chunks, {
+        facingYaw,
+        position
+      });
+
+      if (
+        nextResidentChunkIds.length === residentChunkIds.length &&
+        nextResidentChunkIds.every((chunkId, index) => residentChunkIds[index] === chunkId)
+      ) {
+        return;
+      }
+
+      const nextResidentChunkIdSet = new Set(nextResidentChunkIds);
+
+      chunkRoots.forEach((chunkRoot, chunkId) => {
+        chunkRoot.setEnabled(nextResidentChunkIdSet.has(chunkId));
+      });
+
+      residentChunkIds = nextResidentChunkIds;
+      syncChunkResidencyTelemetry();
+    };
+
+    for (const chunk of manifest.chunks) {
       const chunkRoot = new TransformNode(`chunk-root-${chunk.id}`, scene);
       chunkRoot.parent = worldRoot;
 
@@ -575,13 +794,70 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       staticPhysicsMeshes.push(chunkFloor);
       walkableSurfaceMeshes.push(chunkFloor);
 
+      const propLoads: Promise<void>[] = [];
+
       manifest.roads
         .filter((road) => chunk.roadIds.includes(road.id))
         .forEach((road) => {
-          const roadSegments = buildRoadSegments(scene, chunkRoot, road, roadMaterial);
+          const roadSegments = buildRoadSegments(scene, chunkRoot, road, { road: roadMaterial, curb: curbMaterial as StandardMaterial, intersection: intersectionMaterial as StandardMaterial });
           staticPhysicsMeshes.push(...roadSegments);
           walkableSurfaceMeshes.push(...roadSegments);
+
+          let accumulatedDistance = 0;
+          for (let index = 0; index < road.points.length - 1; index += 1) {
+            const start = road.points[index];
+            const end = road.points[index + 1];
+            if (!start || !end) continue;
+            
+            const deltaX = end.x - start.x;
+            const deltaZ = end.z - start.z;
+            const length = Math.sqrt(deltaX * deltaX + deltaZ * deltaZ);
+            const rotationY = Math.atan2(deltaX, deltaZ);
+            
+            let segmentDistance = 0;
+            while (segmentDistance < length) {
+              const remaining = length - segmentDistance;
+              const step = Math.min(remaining, 60 - accumulatedDistance);
+              segmentDistance += step;
+              accumulatedDistance += step;
+              
+              if (accumulatedDistance >= 60) {
+                accumulatedDistance = 0;
+                
+                const ratio = segmentDistance / length;
+                const pointX = start.x + deltaX * ratio;
+                const pointZ = start.z + deltaZ * ratio;
+                
+                const lightProxy = MeshBuilder.CreateBox(`${road.id}-light-${index}-${Math.floor(ratio*100)}`, { width: 0.35, height: 2.6, depth: 0.35 }, scene);
+                
+                const proxyMat = new StandardMaterial(`${lightProxy.name}-mat`, scene);
+                proxyMat.diffuseColor = new Color3(0.5, 0.5, 0.5);
+                lightProxy.material = proxyMat;
+                
+                const offset = road.width / 2 + 1.0;
+                const localPos = new Vector3(offset, 1.3, 0);
+                const spawnPoint = new Vector3(pointX, 0, pointZ);
+                lightProxy.position = Vector3.TransformCoordinates(localPos, Matrix.RotationY(rotationY)).add(spawnPoint);
+                lightProxy.rotation.y = rotationY;
+                lightProxy.parent = chunkRoot;
+                
+                if (assetRegistry.props["signpost"]) {
+                  propLoads.push(
+                    attachAuthoredVisualToProxy({
+                      assetId: "prop:signpost",
+                      entry: assetRegistry.props["signpost"],
+                      proxyMesh: lightProxy,
+                      scene,
+                      verticalOffset: -1.3
+                    }).then(() => undefined)
+                  );
+                }
+              }
+            }
+          }
         });
+
+      await Promise.all(propLoads);
 
       const chunkMassing = await buildChunkMassing(
         chunkRoot,
@@ -593,8 +869,16 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       staticPhysicsMeshes.push(...chunkMassing);
       exitBlockingMeshes.push(...chunkMassing);
 
-      chunkRoots.push(chunkRoot);
+      chunkRoots.set(chunk.id, chunkRoot);
     }
+
+    updateChunkResidency(
+      {
+        x: spawnCandidate.position.x,
+        z: spawnCandidate.position.z
+      },
+      (spawnCandidate.headingDegrees * Math.PI) / 180
+    );
 
     physicsAggregates = await enableStaticPhysics(scene, staticPhysicsMeshes);
     let controller: PlayerVehicleController;
@@ -878,6 +1162,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     let frameTimeSampleSumMs = 0;
     let nextFrameTimeSampleIndex = 0;
     let framesSincePerformanceRefresh = PERFORMANCE_TELEMETRY_UPDATE_INTERVAL;
+    let framesSinceTelemetrySync = SCENE_TELEMETRY_UPDATE_INTERVAL;
 
     const recordWorldPerformanceFrame = (frameTimeMs: number): void => {
       if (Number.isFinite(frameTimeMs) && frameTimeMs > 0) {
@@ -893,8 +1178,6 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       }
 
       performanceTelemetry.sampleCount = frameTimeSamples.length;
-      performanceTelemetry.meshCount = scene.meshes.length;
-      performanceTelemetry.activeMeshCount = scene.getActiveMeshes().length;
 
       if (frameTimeSamples.length === 0) {
         return;
@@ -906,6 +1189,9 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         return;
       }
 
+      performanceTelemetry.meshCount = scene.meshes.length;
+      performanceTelemetry.activeMeshCount = scene.getActiveMeshes().length;
+
       const sortedFrameTimes = frameTimeSamples.slice().sort((left, right) => left - right);
       const averageFrameTimeMs = frameTimeSampleSumMs / frameTimeSamples.length;
 
@@ -914,6 +1200,21 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       performanceTelemetry.frameTimeP95Ms = getFrameTimePercentile(sortedFrameTimes, 0.95);
       framesSincePerformanceRefresh = 0;
     };
+
+    function forceSyncCanvasTelemetry(): void {
+      syncCanvasTelemetry();
+      framesSinceTelemetrySync = 0;
+    }
+
+    function maybeSyncCanvasTelemetry(): void {
+      framesSinceTelemetrySync += 1;
+
+      if (framesSinceTelemetrySync < SCENE_TELEMETRY_UPDATE_INTERVAL) {
+        return;
+      }
+
+      forceSyncCanvasTelemetry();
+    }
 
     const completeHijack = (nextVehicle: ManagedVehicleRuntime): void => {
       const previousVehicle = vehicleManager.getActiveVehicle();
@@ -954,7 +1255,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       }
 
       canvas.dataset.hijackableVehicleCount = String(hijackableVehicles.length);
-      syncCanvasTelemetry();
+      forceSyncCanvasTelemetry();
     };
 
     const cycleActiveVehicle = async (): Promise<void> => {
@@ -966,7 +1267,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
 
       try {
         await vehicleManager.cycleVehicle();
-        syncCanvasTelemetry();
+        forceSyncCanvasTelemetry();
       } finally {
         vehicleSwitchInFlight = false;
       }
@@ -981,7 +1282,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
 
       try {
         await vehicleManager.switchVehicle(vehicleType);
-        syncCanvasTelemetry();
+        forceSyncCanvasTelemetry();
       } finally {
         vehicleSwitchInFlight = false;
       }
@@ -1134,6 +1435,24 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
           listener({ events: runOutcomeEvents, snapshot: runOutcomeSnapshot });
         });
       }
+
+      const residencyTarget = possessionMode === "on-foot" && possessionRuntime.getOnFootRuntime() !== null
+        ? {
+            facingYaw: possessionRuntime.getFacingYaw(),
+            position: possessionRuntime.getOnFootRuntime()!.mesh.position
+          }
+        : {
+            facingYaw: vehicleManager.getActiveVehicle().mesh.rotation.y,
+            position: vehicleManager.getActiveVehicle().mesh.position
+          };
+
+      updateChunkResidency(
+        {
+          x: residencyTarget.position.x,
+          z: residencyTarget.position.z
+        },
+        residencyTarget.facingYaw
+      );
     };
 
     const syncCanvasTelemetry = (): void => {
@@ -1154,6 +1473,8 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
 
       if (scene.metadata && typeof scene.metadata === "object") {
         Object.assign(scene.metadata, {
+          residentChunkCount: residentChunkIds.length,
+          residentChunkIds: [...residentChunkIds],
           settingsGraphicsPreset: settings.graphicsPreset,
           settingsPedestrianDensity: settings.pedestrianDensity,
           settingsTrafficDensity: settings.trafficDensity,
@@ -1173,6 +1494,8 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       canvas.dataset.settingsPedestrianDensity = settings.pedestrianDensity;
       canvas.dataset.settingsTrafficDensity = settings.trafficDensity;
       canvas.dataset.settingsWorldSize = settings.worldSize;
+      canvas.dataset.residentChunkCount = String(residentChunkIds.length);
+      canvas.dataset.residentChunkIds = residentChunkIds.join(",");
       canvas.dataset.responderVehicleCount = String(responderVehicles.length);
       canvas.dataset.trafficVehicleCount = String(trafficVehicles.length);
       applyPedestrianSceneTelemetry({
@@ -1246,7 +1569,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         controller.bindVehicle(event.activeVehicle.mesh);
         camera.setVehicleTarget(event.activeVehicle.mesh);
         scene.activeCamera = camera;
-        syncCanvasTelemetry();
+        forceSyncCanvasTelemetry();
       });
       scene.registerBeforeRender(updateWorldRuntime);
     } catch (error) {
@@ -1275,41 +1598,43 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
         ...browserSupportTelemetry,
         sliceId: manifest.sliceId,
         worldRootName: worldRoot.name,
-      staticSurfaceRootName: staticSurfaceRoot.name,
-      chunkRootNames: chunkRoots.map((chunkRoot) => chunkRoot.name),
-      physicsReady: scene.isPhysicsEnabled(),
-      graphicsBoundaryAlpha: graphicsProfile.boundaryAlpha,
-      graphicsHardwareScalingLevel: graphicsProfile.hardwareScalingLevel,
-      graphicsFillLightIntensity: graphicsProfile.fillLightIntensity,
-      graphicsFogDensity: graphicsProfile.fogDensity,
-      graphicsLightIntensity: graphicsProfile.lightIntensity,
-      graphicsBrowserFamily: resolvedBrowserSupport.browserFamily,
-      settingsGraphicsPreset: settings.graphicsPreset,
-      settingsPedestrianDensity: settings.pedestrianDensity,
-      settingsTrafficDensity: settings.trafficDensity,
-      settingsWorldSize: settings.worldSize,
-      starterVehicleId: vehicleManager.getActiveVehicle().mesh.name,
-      availableVehicleTypes: [...AVAILABLE_VEHICLE_TYPES],
-      activeVehicleType: vehicleManager.getActiveVehicle().vehicleType,
+        staticSurfaceRootName: staticSurfaceRoot.name,
+        chunkRootNames: Array.from(chunkRoots.values()).map((chunkRoot) => chunkRoot.name),
+        residentChunkCount: residentChunkIds.length,
+        residentChunkIds: [...residentChunkIds],
+        physicsReady: scene.isPhysicsEnabled(),
+        graphicsBoundaryAlpha: graphicsProfile.boundaryAlpha,
+        graphicsHardwareScalingLevel: graphicsProfile.hardwareScalingLevel,
+        graphicsFillLightIntensity: graphicsProfile.fillLightIntensity,
+        graphicsFogDensity: graphicsProfile.fogDensity,
+        graphicsLightIntensity: graphicsProfile.lightIntensity,
+        graphicsBrowserFamily: resolvedBrowserSupport.browserFamily,
+        settingsGraphicsPreset: settings.graphicsPreset,
+        settingsPedestrianDensity: settings.pedestrianDensity,
+        settingsTrafficDensity: settings.trafficDensity,
+        settingsWorldSize: settings.worldSize,
+        starterVehicleId: vehicleManager.getActiveVehicle().mesh.name,
+        availableVehicleTypes: [...AVAILABLE_VEHICLE_TYPES],
+        activeVehicleType: vehicleManager.getActiveVehicle().vehicleType,
         activeCamera: camera.name,
         heatLevel: heatRuntime.getSnapshot().level,
         heatStage: heatRuntime.getSnapshot().stage,
         hijackableVehicleCount: hijackableVehicles.length,
         hijackableVehicleIds: hijackableVehicles.map((vehicle) => vehicle.mesh.name),
-      responderVehicleCount: responderRuntime.getVehicles().length,
-      responderVehicleIds: responderRuntime.getVehicles().map((vehicle) => vehicle.mesh.name),
-      trafficVehicleCount: trafficSystem?.getVehicles().length ?? 0,
-      trafficVehicleIds: trafficSystem?.getVehicles().map((vehicle) => vehicle.mesh.name) ?? [],
-      visualPaletteChunkColor: visualPalette.chunkColor,
-      visualPaletteHazeColor: visualPalette.hazeColor,
-      visualPalettePedestrianColor: visualPalette.pedestrianColor,
-      visualPaletteRoadColor: visualPalette.roadColor,
-      visualPaletteSkyColor: visualPalette.skyColor,
-      visualPaletteVehicleAccentColor: visualPalette.vehicleAccentColor,
-      readinessMilestone: "controllable-vehicle",
-      spawnRoadId: spawnCandidate.roadId,
-      spawnChunkId: spawnCandidate.chunkId
-    };
+        responderVehicleCount: responderRuntime.getVehicles().length,
+        responderVehicleIds: responderRuntime.getVehicles().map((vehicle) => vehicle.mesh.name),
+        trafficVehicleCount: trafficSystem?.getVehicles().length ?? 0,
+        trafficVehicleIds: trafficSystem?.getVehicles().map((vehicle) => vehicle.mesh.name) ?? [],
+        visualPaletteChunkColor: visualPalette.chunkColor,
+        visualPaletteHazeColor: visualPalette.hazeColor,
+        visualPalettePedestrianColor: visualPalette.pedestrianColor,
+        visualPaletteRoadColor: visualPalette.roadColor,
+        visualPaletteSkyColor: visualPalette.skyColor,
+        visualPaletteVehicleAccentColor: visualPalette.vehicleAccentColor,
+        readinessMilestone: "controllable-vehicle",
+        spawnRoadId: spawnCandidate.roadId,
+        spawnChunkId: spawnCandidate.chunkId
+      };
     canvas.dataset.readyMilestone = "controllable-vehicle";
     canvas.dataset.activeCamera = camera.name;
     canvas.dataset.browserAudioContextAvailable = browserSupportTelemetry.browserAudioContextAvailable;
@@ -1342,7 +1667,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     canvas.dataset.visualPaletteChunkColor = visualPalette.chunkColor;
     canvas.dataset.visualPaletteSkyColor = visualPalette.skyColor;
     canvas.dataset.visualPaletteVehicleAccentColor = visualPalette.vehicleAccentColor;
-    syncCanvasTelemetry();
+    forceSyncCanvasTelemetry();
 
     resize = (): void => {
       engine.resize();
@@ -1353,7 +1678,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       currentInputFrame = controller.captureInputFrame();
       scene.render();
       recordWorldPerformanceFrame(engine.getDeltaTime() || 16);
-      syncCanvasTelemetry();
+      maybeSyncCanvasTelemetry();
     });
 
     return {

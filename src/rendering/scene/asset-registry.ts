@@ -148,6 +148,7 @@ export async function loadAssetContainer(
       });
       return container;
     } catch (error) {
+      console.error("LOAD ASSET CONTAINER ERROR:", error);
       logger.warn('asset-fallback', { assetId, reason: error instanceof Error ? error.message : String(error) });
       return null;
     }
