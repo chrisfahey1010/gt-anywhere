@@ -22,3 +22,7 @@ export function resolveLocationPresetPath(baseUrl?: string): string {
 export function resolveVehicleTuningPath(vehicleType: string, baseUrl?: string): string {
   return resolvePublicAssetPath(`data/tuning/${vehicleType}.json`, baseUrl);
 }
+
+export function resolveAssetRegistryPath(baseUrl?: string): string {
+  return resolvePublicAssetPath("data/assets/registry.json", baseUrl);
+}

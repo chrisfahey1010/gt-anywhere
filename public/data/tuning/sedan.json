@@ -10,7 +10,8 @@
     "impactSpeedThreshold": 7
   },
   "model": {
-    "bodyStyle": "sedan"
+    "bodyStyle": "sedan",
+    "applyVisualTint": false
   },
   "dimensions": {
     "width": 1.8,

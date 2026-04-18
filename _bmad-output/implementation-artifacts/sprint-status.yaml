@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: "2026-04-06T22:37:53-07:00"
-last_updated: "2026-04-14"
+last_updated: "2026-04-17"
 project: gt-anywhere
 project_key: NOKEY
 tracking_system: file-system
@@ -73,7 +73,7 @@ development_status:
   4-6-ship-a-public-quality-browser-build: done
   epic-4-retrospective: optional
   epic-5: in-progress
-  5-1-external-asset-replacement-pipeline: ready-for-dev
+  5-1-external-asset-replacement-pipeline: done
   5-2-recognition-first-world-generation-upgrade: backlog
   5-3-road-and-urban-presentation-upgrade: backlog
   5-4-driving-feel-camera-and-mouse-control-overhaul: backlog

@@ -14,6 +14,11 @@ describe("chaos scene runtime", () => {
   let engine: NullEngine;
   let scene: Scene;
   let root: TransformNode;
+  const assetRegistry = {
+    props: {},
+    vehicles: {},
+    world: {}
+  };
 
   beforeEach(() => {
     engine = new NullEngine();
@@ -65,6 +70,7 @@ describe("chaos scene runtime", () => {
 
   it("creates breakable prop scene handles from the manifest plan and disposes them cleanly", () => {
     const runtime = createSceneChaosRuntime({
+      assetRegistry: assetRegistry as any,
       manifest: {
         breakableProps: {
           props: [
@@ -123,6 +129,7 @@ describe("chaos scene runtime", () => {
 
   it("updates damage and break state from explicit scene actors instead of controller state", () => {
     const runtime = createSceneChaosRuntime({
+      assetRegistry: assetRegistry as any,
       manifest: {
         breakableProps: {
           props: [
@@ -196,6 +203,7 @@ describe("chaos scene runtime", () => {
 
   it("adds additive chaos telemetry without changing readiness or camera fields", () => {
     const runtime = createSceneChaosRuntime({
+      assetRegistry: assetRegistry as any,
       manifest: {
         breakableProps: {
           props: [
@@ -263,6 +271,7 @@ describe("chaos scene runtime", () => {
 
   it("routes explicit combat hits through the existing vehicle damage and prop break seams", () => {
     const runtime = createSceneChaosRuntime({
+      assetRegistry: assetRegistry as any,
       manifest: {
         breakableProps: {
           props: [

@@ -6,12 +6,17 @@ import {
   Scene,
   StandardMaterial,
   TransformNode,
-  Vector3
+  Vector3,
+  InstantiatedEntries
 } from "@babylonjs/core";
 import type { SliceSceneVisualPalette, SpawnCandidate } from "../../world/chunks/slice-manifest";
 import type { PlayerVehicleController, VehicleControlState } from "../controllers/player-vehicle-controller";
 import type { StarterVehicleRuntime } from "./create-starter-vehicle";
 import { resolveVehicleTuningPath } from "../../app/config/runtime-paths";
+import { loadAssetRegistry, loadAssetContainer } from "../../rendering/scene/asset-registry";
+import { createLogger } from "../../app/logging/logger";
+
+const logger = createLogger();
 
 export interface VehicleTuning {
   name: string;
@@ -82,45 +87,15 @@ export async function loadTuningProfile(vehicleType: string): Promise<VehicleTun
   return tuningProfilePromise;
 }
 
-export function createVehicleFactory(options: CreateVehicleOptions): StarterVehicleRuntime {
-  const { controller, metadata, parent, runtimeName, scene, spawnCandidate, tuning, visualPalette } = options;
+function createProxyVisuals(
+  scene: Scene,
+  vehicleMesh: TransformNode,
+  tuning: VehicleTuning,
+  material: StandardMaterial
+): TransformNode {
   const { width, height, length } = tuning.dimensions;
-  const resolvedBaseColor =
-    visualPalette === undefined
-      ? tuning.color
-      : Color3.Lerp(
-          Color3.FromHexString(tuning.color),
-          Color3.FromHexString(visualPalette.vehicleAccentColor),
-          VEHICLE_SCENE_ACCENT_BLEND
-        )
-          .toHexString()
-          .toLowerCase();
-
-  const vehicleMesh = MeshBuilder.CreateBox(
-    runtimeName ?? `starter-vehicle-${spawnCandidate.id}`,
-    { width, height, depth: length },
-    scene
-  );
-
-  vehicleMesh.parent = parent;
-  vehicleMesh.position = new Vector3(
-    spawnCandidate.position.x,
-    spawnCandidate.position.y + height / 2 + 1.4,
-    spawnCandidate.position.z
-  );
-  vehicleMesh.rotation.y = (spawnCandidate.headingDegrees * Math.PI) / 180;
-  vehicleMesh.isVisible = false;
-  vehicleMesh.metadata = {
-    bodyStyle: tuning.model.bodyStyle,
-    runtimeName: vehicleMesh.name,
-    tuningName: tuning.name,
-    ...metadata,
-    visualBaseColor: resolvedBaseColor
-  };
-
-  const material = new StandardMaterial(`vehicle-material-${spawnCandidate.id}`, scene);
-  material.diffuseColor = Color3.FromHexString(resolvedBaseColor);
-  vehicleMesh.material = material;
+  const proxyRoot = new TransformNode(`${vehicleMesh.name}-proxy-root`, scene);
+  proxyRoot.parent = vehicleMesh;
 
   const createVisualPart = (
     name: string,
@@ -128,7 +103,7 @@ export function createVehicleFactory(options: CreateVehicleOptions): StarterVehi
     position: Vector3
   ): void => {
     const part = MeshBuilder.CreateBox(`${vehicleMesh.name}-${name}`, dimensions, scene);
-    part.parent = vehicleMesh;
+    part.parent = proxyRoot;
     part.position.copyFrom(position);
     part.material = material;
   };
@@ -197,6 +172,111 @@ export function createVehicleFactory(options: CreateVehicleOptions): StarterVehi
       break;
   }
 
+  return proxyRoot;
+}
+
+export function createVehicleFactory(options: CreateVehicleOptions): StarterVehicleRuntime {
+  const { controller, metadata, parent, runtimeName, scene, spawnCandidate, tuning, visualPalette } = options;
+  const { width, height, length } = tuning.dimensions;
+  const resolvedBaseColor =
+    visualPalette === undefined
+      ? tuning.color
+      : Color3.Lerp(
+          Color3.FromHexString(tuning.color),
+          Color3.FromHexString(visualPalette.vehicleAccentColor),
+          VEHICLE_SCENE_ACCENT_BLEND
+        )
+          .toHexString()
+          .toLowerCase();
+
+  const vehicleMesh = MeshBuilder.CreateBox(
+    runtimeName ?? `starter-vehicle-${spawnCandidate.id}`,
+    { width, height, depth: length },
+    scene
+  );
+
+  vehicleMesh.parent = parent;
+  vehicleMesh.position = new Vector3(
+    spawnCandidate.position.x,
+    spawnCandidate.position.y + height / 2 + 1.4,
+    spawnCandidate.position.z
+  );
+  vehicleMesh.rotation.y = (spawnCandidate.headingDegrees * Math.PI) / 180;
+  vehicleMesh.isVisible = false;
+  vehicleMesh.metadata = {
+    bodyStyle: tuning.model.bodyStyle,
+    runtimeName: vehicleMesh.name,
+    tuningName: tuning.name,
+    ...metadata,
+    visualBaseColor: resolvedBaseColor
+  };
+
+  const material = new StandardMaterial(`vehicle-material-${spawnCandidate.id}`, scene);
+  material.diffuseColor = Color3.FromHexString(resolvedBaseColor);
+  vehicleMesh.material = material;
+
+  let proxyRoot: TransformNode | null = createProxyVisuals(scene, vehicleMesh, tuning, material);
+  let instantiatedAsset: InstantiatedEntries | null = null;
+  let isDisposed = false;
+
+  loadAssetRegistry()
+    .then((registry) => {
+      if (isDisposed) return;
+      const entry = registry.vehicles[tuning.model.bodyStyle];
+      if (!entry) {
+        throw new Error(`Registry missing vehicle entry for ${tuning.model.bodyStyle}`);
+      }
+      return loadAssetContainer(tuning.model.bodyStyle, entry.modelPath, scene)
+        .then((container) => ({ container, entry }));
+    })
+    .then((result) => {
+      if (isDisposed || !result || !result.container) return;
+
+      const { container, entry } = result;
+      instantiatedAsset = container.instantiateModelsToScene((name) => `${vehicleMesh.name}-${name}`);
+      
+      const visualRoot = instantiatedAsset.rootNodes[0] as TransformNode;
+      if (visualRoot) {
+        visualRoot.parent = vehicleMesh;
+        visualRoot.scaling.scaleInPlace(entry.rootScale);
+        visualRoot.position.copyFromFloats(
+          entry.transformOffset[0],
+          entry.transformOffset[1],
+          entry.transformOffset[2]
+        );
+        
+        // Clone and apply materials properly if needed
+        const clonedMaterials: StandardMaterial[] = [];
+        visualRoot.getChildMeshes().forEach((child) => {
+          if (child.material) {
+            const mat = child.material.clone(`${child.name}-mat`) as StandardMaterial;
+            child.material = mat;
+            clonedMaterials.push(mat);
+          }
+        });
+        
+        // Add cloned materials to disposal list
+        const originalDispose = instantiatedAsset.dispose.bind(instantiatedAsset);
+        instantiatedAsset.dispose = () => {
+          originalDispose();
+          clonedMaterials.forEach(m => m.dispose());
+        };
+
+        // Reapply metadata to the visual root if needed
+        visualRoot.metadata = { ...vehicleMesh.metadata };
+      }
+
+      if (proxyRoot) {
+        proxyRoot.dispose();
+        proxyRoot = null;
+      }
+    })
+    .catch((error) => {
+      if (!isDisposed) {
+        logger.warn('asset-fallback', { assetId: tuning.model.bodyStyle, reason: error instanceof Error ? error.message : String(error) });
+      }
+    });
+
   const physicsAggregate = new PhysicsAggregate(
     vehicleMesh,
     PhysicsShapeType.BOX,
@@ -242,6 +322,15 @@ export function createVehicleFactory(options: CreateVehicleOptions): StarterVehi
       );
     },
     dispose: () => {
+      isDisposed = true;
+      if (instantiatedAsset) {
+        instantiatedAsset.rootNodes.forEach(node => node.dispose());
+        instantiatedAsset.dispose();
+      }
+      if (proxyRoot) {
+        proxyRoot.dispose();
+        proxyRoot = null;
+      }
       physicsAggregate.dispose();
       material.dispose();
       vehicleMesh.dispose();

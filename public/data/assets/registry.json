@@ -1,0 +1,83 @@
+{
+  "vehicles": {
+    "sports-car": {
+      "modelPath": "assets/models/vehicles/sports-car.glb",
+      "rootScale": 1.0,
+      "transformOffset": [0, 0, 0],
+      "fallbackProxy": {
+        "type": "box",
+        "dimensions": [1.8, 1.2, 4.2]
+      }
+    },
+    "heavy-truck": {
+      "modelPath": "assets/models/vehicles/heavy-truck.glb",
+      "rootScale": 1.0,
+      "transformOffset": [0, 0, 0],
+      "fallbackProxy": {
+        "type": "box",
+        "dimensions": [2.5, 3.5, 7.0]
+      }
+    },
+    "sedan": {
+      "modelPath": "assets/models/vehicles/sedan.glb",
+      "rootScale": 1.0,
+      "transformOffset": [0, 0, 0],
+      "fallbackProxy": {
+        "type": "box",
+        "dimensions": [2.0, 1.5, 4.5]
+      }
+    }
+  },
+  "world": {
+    "building-0": {
+      "modelPath": "assets/models/world/building-0.obj",
+      "rootScale": 1.0,
+      "transformOffset": [0, 0, 0],
+      "fallbackProxy": { "type": "box", "dimensions": [20, 24, 18] }
+    },
+    "building-1": {
+      "modelPath": "assets/models/world/building-1.obj",
+      "rootScale": 1.0,
+      "transformOffset": [0, 0, 0],
+      "fallbackProxy": { "type": "box", "dimensions": [30, 38, 26] }
+    },
+    "building-2": {
+      "modelPath": "assets/models/world/building-2.obj",
+      "rootScale": 1.0,
+      "transformOffset": [0, 0, 0],
+      "fallbackProxy": { "type": "box", "dimensions": [40, 52, 34] }
+    }
+  },
+  "props": {
+    "barrier": {
+      "modelPath": "assets/models/props/barrier.obj",
+      "rootScale": 1.0,
+      "transformOffset": [0, 0, 0],
+      "fallbackProxy": { "type": "box", "dimensions": [1.8, 0.8, 0.6] }
+    },
+    "bollard": {
+      "modelPath": "assets/models/props/bollard.obj",
+      "rootScale": 1.0,
+      "transformOffset": [0, 0, 0],
+      "fallbackProxy": { "type": "cylinder", "dimensions": [0.45, 1.1] }
+    },
+    "hydrant": {
+      "modelPath": "assets/models/props/hydrant.obj",
+      "rootScale": 1.0,
+      "transformOffset": [0, 0, 0],
+      "fallbackProxy": { "type": "cylinder", "dimensions": [0.65, 1.2] }
+    },
+    "short-post": {
+      "modelPath": "assets/models/props/short-post.obj",
+      "rootScale": 1.0,
+      "transformOffset": [0, 0, 0],
+      "fallbackProxy": { "type": "cylinder", "dimensions": [0.35, 0.9] }
+    },
+    "signpost": {
+      "modelPath": "assets/models/props/signpost.obj",
+      "rootScale": 1.0,
+      "transformOffset": [0, 0, 0],
+      "fallbackProxy": { "type": "box", "dimensions": [0.35, 2.6, 0.35] }
+    }
+  }
+}

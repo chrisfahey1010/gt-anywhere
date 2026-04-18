@@ -6,6 +6,7 @@ import {
   Engine,
   HavokPlugin,
   HemisphericLight,
+  InstantiatedEntries,
   MeshBuilder,
   PhysicsAggregate,
   PhysicsShapeType,
@@ -14,6 +15,8 @@ import {
   TransformNode,
   Vector3
 } from "@babylonjs/core";
+import { loadAssetRegistry, type AssetEntry, type AssetRegistry } from "./asset-registry";
+import { attachAuthoredVisualToProxy } from "./authored-asset-visual";
 import type { SpawnCandidate, SliceManifest, SliceRoad } from "../../world/chunks/slice-manifest";
 import { resolveSceneVisualPalette } from "../../world/chunks/scene-visual-palette";
 import { createOnFootCamera, type OnFootCamera } from "../../sandbox/on-foot/create-on-foot-camera";
@@ -268,13 +271,41 @@ function buildRoadSegments(
   return segments;
 }
 
-function buildChunkMassing(
+function resolveWorldMassingFallbackDimensions(
+  entry: AssetEntry | undefined,
+  chunkIndex: number,
+  buildingIndex: number
+): { depth: number; height: number; width: number } {
+  const fallbackProxy = entry?.fallbackProxy;
+
+  if (
+    fallbackProxy &&
+    fallbackProxy.type === "box" &&
+    Array.isArray(fallbackProxy.dimensions) &&
+    fallbackProxy.dimensions.length === 3
+  ) {
+    return {
+      width: fallbackProxy.dimensions[0],
+      height: fallbackProxy.dimensions[1],
+      depth: fallbackProxy.dimensions[2]
+    };
+  }
+
+  return {
+    width: 20 + buildingIndex * 10,
+    depth: 18 + buildingIndex * 8,
+    height: 24 + buildingIndex * 14 + chunkIndex * 4
+  };
+}
+
+async function buildChunkMassing(
   parent: TransformNode,
   manifest: SliceManifest,
   chunkIndex: number,
   spawnChunkId: string,
-  material: StandardMaterial
-): AbstractMesh[] {
+  material: StandardMaterial,
+  assetRegistry: AssetRegistry
+): Promise<AbstractMesh[]> {
   const chunk = manifest.chunks[chunkIndex];
   const buildings: AbstractMesh[] = [];
 
@@ -282,10 +313,13 @@ function buildChunkMassing(
     return buildings;
   }
 
+  const scene = material.getScene();
+  const authoredVisualLoads: Promise<void>[] = [];
+
   for (let buildingIndex = 0; buildingIndex < 3; buildingIndex += 1) {
-    const width = 20 + buildingIndex * 10;
-    const depth = 18 + buildingIndex * 8;
-    const height = 24 + buildingIndex * 14 + chunkIndex * 4;
+    const assetId = `building-${buildingIndex}`;
+    const assetEntry = assetRegistry.world[assetId];
+    const { width, depth, height } = resolveWorldMassingFallbackDimensions(assetEntry, chunkIndex, buildingIndex);
     const building = MeshBuilder.CreateBox(
       `${chunk.id}-building-${buildingIndex}`,
       {
@@ -293,8 +327,9 @@ function buildChunkMassing(
         depth,
         height
       },
-      material.getScene()
+      scene
     );
+    const buildingMaterial = material.clone(`${chunk.id}-building-${buildingIndex}-material`) as StandardMaterial;
 
     building.position = new Vector3(
       chunk.origin.x + 36 + buildingIndex * 38,
@@ -302,9 +337,21 @@ function buildChunkMassing(
       chunk.origin.z + 46 + (chunkIndex % 2) * 48
     );
     building.parent = parent;
-    building.material = material;
+    building.material = buildingMaterial;
     buildings.push(building);
+
+    authoredVisualLoads.push(
+      attachAuthoredVisualToProxy({
+        assetId: `world:${assetId}`,
+        entry: assetEntry,
+        proxyMesh: building,
+        scene,
+        verticalOffset: -height / 2
+      }).then(() => undefined)
+    );
   }
+
+  await Promise.all(authoredVisualLoads);
 
   return buildings;
 }
@@ -437,6 +484,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       canvas.addEventListener("webglcontextlost", handleContextLost, false);
 
       const doLoad = async (): Promise<WorldSceneHandle> => {
+        const assetRegistry = await loadAssetRegistry();
         const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
     engine.setHardwareScalingLevel(graphicsProfile.hardwareScalingLevel);
     const scene = new Scene(engine);
@@ -505,7 +553,9 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
     const exitBlockingMeshes = buildBoundaryWalls(scene, staticSurfaceRoot, manifest, boundaryMaterial);
     staticPhysicsMeshes.push(...exitBlockingMeshes);
 
-    const chunkRoots = manifest.chunks.map((chunk, chunkIndex) => {
+    const chunkRoots: TransformNode[] = [];
+
+    for (const [chunkIndex, chunk] of manifest.chunks.entries()) {
       const chunkRoot = new TransformNode(`chunk-root-${chunk.id}`, scene);
       chunkRoot.parent = worldRoot;
 
@@ -535,18 +585,19 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
           walkableSurfaceMeshes.push(...roadSegments);
         });
 
-      const chunkMassing = buildChunkMassing(
+      const chunkMassing = await buildChunkMassing(
         chunkRoot,
         manifest,
         chunkIndex,
         spawnCandidate.chunkId,
-        chunkMassingMaterial
+        chunkMassingMaterial,
+        assetRegistry
       );
       staticPhysicsMeshes.push(...chunkMassing);
       exitBlockingMeshes.push(...chunkMassing);
 
-      return chunkRoot;
-    });
+      chunkRoots.push(chunkRoot);
+    }
 
     physicsAggregates = await enableStaticPhysics(scene, staticPhysicsMeshes);
     let controller: PlayerVehicleController;
@@ -705,6 +756,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
 
     try {
       chaosRuntime = createSceneChaosRuntime({
+        assetRegistry,
         manifest,
         parent: worldRoot,
         scene

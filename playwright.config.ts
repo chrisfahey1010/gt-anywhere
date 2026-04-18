@@ -17,6 +17,8 @@ export default defineConfig({
   testDir: "./tests/smoke",
   testMatch: /.*\.pw\.spec\.ts$/,
   fullyParallel: true,
+  timeout: 60000,
+  workers: 2,
   reporter: "list",
   use: {
     baseURL,

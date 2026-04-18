@@ -15,6 +15,11 @@ describe("chaos scene runtime smoke", () => {
   let engine: NullEngine;
   let scene: Scene;
   let root: TransformNode;
+  const assetRegistry = {
+    props: {},
+    vehicles: {},
+    world: {}
+  };
 
   beforeEach(() => {
     engine = new NullEngine();
@@ -113,7 +118,12 @@ describe("chaos scene runtime smoke", () => {
         position: Vector3;
         rotation: Vector3;
       };
-      const runtime = createSceneChaosRuntime({ manifest, parent: root, scene });
+      const runtime = createSceneChaosRuntime({
+        assetRegistry: assetRegistry as any,
+        manifest,
+        parent: root,
+        scene
+      });
       const telemetryVehicle = {
         mesh: {
           name: activeVehicleMesh.name,

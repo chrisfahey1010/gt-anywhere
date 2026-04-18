@@ -3,10 +3,13 @@ import {
   MeshBuilder,
   StandardMaterial,
   TransformNode,
+  type AbstractMesh,
   type Mesh,
   type Scene,
   type Vector3
 } from "@babylonjs/core";
+import { attachAuthoredVisualToProxy, type AuthoredVisualAttachment } from "./authored-asset-visual";
+import type { AssetRegistry } from "./asset-registry";
 import {
   createBreakablePropSystem,
   type BreakablePropBrokenEvent,
@@ -58,6 +61,7 @@ export interface SceneChaosRuntime {
 }
 
 export interface CreateSceneChaosRuntimeOptions {
+  assetRegistry: AssetRegistry;
   manifest: Pick<SliceManifest, "breakableProps"> & { sceneMetadata?: SliceManifest["sceneMetadata"] };
   parent: TransformNode;
   scene: Scene;
@@ -104,9 +108,11 @@ interface PropVisualConfig {
 }
 
 interface PropVisualHandle {
+  authoredVisual?: AuthoredVisualAttachment;
   entry: BreakablePropPlanEntry;
   material: StandardMaterial;
   mesh: Mesh;
+  visualRoot?: TransformNode | AbstractMesh;
 }
 
 interface RuntimeState extends SceneChaosRuntime {
@@ -185,13 +191,44 @@ function getPropCollisionRadius(propType: BreakablePropType): number {
   return PROP_VISUALS[propType].collisionRadius;
 }
 
+function resolvePropVisualConfig(propType: BreakablePropType, assetRegistry: AssetRegistry): PropVisualConfig {
+  const defaultConfig = PROP_VISUALS[propType];
+  const fallbackProxy = assetRegistry.props[propType]?.fallbackProxy;
+
+  if (!fallbackProxy || !Array.isArray(fallbackProxy.dimensions)) {
+    return defaultConfig;
+  }
+
+  if (fallbackProxy.type === "box" && fallbackProxy.dimensions.length === 3) {
+    return {
+      ...defaultConfig,
+      depth: fallbackProxy.dimensions[2],
+      height: fallbackProxy.dimensions[1],
+      kind: "box",
+      width: fallbackProxy.dimensions[0]
+    };
+  }
+
+  if (fallbackProxy.type === "cylinder" && fallbackProxy.dimensions.length === 2) {
+    return {
+      ...defaultConfig,
+      diameter: fallbackProxy.dimensions[0],
+      height: fallbackProxy.dimensions[1],
+      kind: "cylinder"
+    };
+  }
+
+  return defaultConfig;
+}
+
 function createPropMesh(
   handle: PropVisualHandle,
   parent: TransformNode,
   scene: Scene,
-  propColors: Record<BreakablePropType, string>
+  propColors: Record<BreakablePropType, string>,
+  assetRegistry: AssetRegistry
 ): void {
-  const config = PROP_VISUALS[handle.entry.propType];
+  const config = resolvePropVisualConfig(handle.entry.propType, assetRegistry);
   const mesh =
     config.kind === "box"
       ? MeshBuilder.CreateBox(
@@ -236,6 +273,20 @@ function applyBrokenPropVisual(handle: PropVisualHandle): void {
   handle.mesh.checkCollisions = false;
   handle.mesh.rotation.z = Math.PI / 2;
   handle.mesh.scaling.y = 0.35;
+
+  if (handle.visualRoot) {
+    handle.visualRoot.getChildMeshes().forEach((child: AbstractMesh) => {
+      if (child.material) {
+        const mat = child.material.clone(`${child.name}-broken`) as StandardMaterial;
+        if (mat instanceof StandardMaterial) {
+          mat.diffuseColor = BROKEN_PROP_COLOR.clone();
+        } else if ((mat as any).albedoColor !== undefined) {
+          (mat as any).albedoColor = BROKEN_PROP_COLOR.clone();
+        }
+        child.material = mat;
+      }
+    });
+  }
 
   if (handle.mesh.metadata && typeof handle.mesh.metadata === "object") {
     Object.assign(handle.mesh.metadata, {
@@ -345,16 +396,46 @@ export function createSceneChaosRuntime(options: CreateSceneChaosRuntimeOptions)
   const plan = options.manifest.breakableProps ?? { props: [] };
   const propVisuals = new Map<string, PropVisualHandle>();
   const visualPalette = resolveSceneVisualPalette(options.manifest.sceneMetadata);
+  let disposed = false;
 
   plan.props.forEach((entry) => {
-    const handle = {
+    const handle: PropVisualHandle = {
+      authoredVisual: undefined,
       entry,
       material: null as unknown as StandardMaterial,
       mesh: null as unknown as Mesh
     };
 
-    createPropMesh(handle, options.parent, options.scene, visualPalette.propColors);
+    createPropMesh(handle, options.parent, options.scene, visualPalette.propColors, options.assetRegistry);
     propVisuals.set(entry.id, handle);
+
+    const config = resolvePropVisualConfig(entry.propType, options.assetRegistry);
+
+    void attachAuthoredVisualToProxy({
+      assetId: `prop:${entry.propType}`,
+      entry: options.assetRegistry.props[entry.propType],
+      proxyMesh: handle.mesh,
+      scene: options.scene,
+      verticalOffset: -config.height / 2
+    }).then((attachment) => {
+      if (attachment === null) {
+        return;
+      }
+
+      if (disposed) {
+        attachment.dispose();
+        return;
+      }
+
+      handle.authoredVisual = attachment;
+      handle.visualRoot = attachment.root;
+
+      const snapshot = breakablePropSystem.getProps().find((prop) => prop.id === entry.id);
+
+      if (snapshot?.breakState === "broken") {
+        applyBrokenPropVisual(handle);
+      }
+    });
   });
 
   const breakablePropSystem = createBreakablePropSystem(plan);
@@ -364,7 +445,9 @@ export function createSceneChaosRuntime(options: CreateSceneChaosRuntimeOptions)
     breakablePropSystem,
     currentTimeSeconds: 0,
     dispose: () => {
+      disposed = true;
       propVisuals.forEach((handle) => {
+        handle.authoredVisual?.dispose();
         handle.material.dispose();
         handle.mesh.dispose();
       });
