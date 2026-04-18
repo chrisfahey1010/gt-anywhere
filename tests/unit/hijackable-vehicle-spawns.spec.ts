@@ -31,6 +31,8 @@ function createManifest(roads: SliceManifest["roads"]): SliceManifest {
       sessionKey: "test-city-session"
     },
     roads,
+    districts: [],
+    worldEntries: [],
     sceneMetadata: {
       boundaryColor: "#000000",
       displayName: "Test City",

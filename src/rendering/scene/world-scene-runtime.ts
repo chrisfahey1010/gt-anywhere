@@ -1,5 +1,5 @@
 import { Vector3, type Scene } from "@babylonjs/core";
-import type { SliceBounds, SliceRoad, SliceSceneMetadata } from "../../world/chunks/slice-manifest";
+import type { SliceBounds, SliceDistrict, SliceRoad, SliceSceneMetadata } from "../../world/chunks/slice-manifest";
 import type { PlayerInputFrame } from "../../vehicles/controllers/player-vehicle-controller";
 import { resolveCurrentRoad } from "./world-navigation";
 
@@ -84,6 +84,7 @@ export interface CreateWorldNavigationSnapshotOptions {
   };
   manifest: {
     bounds: SliceBounds;
+    districts?: SliceDistrict[];
     roads: SliceRoad[];
     sceneMetadata: Pick<SliceSceneMetadata, "displayName" | "districtName">;
   };
@@ -133,6 +134,25 @@ export function createWorldNavigationRoadSnapshots(roads: SliceRoad[]): WorldNav
   }));
 }
 
+function resolveCurrentDistrictName(options: {
+  districts?: SliceDistrict[];
+  fallbackDistrictName: string;
+  position: {
+    x: number;
+    z: number;
+  };
+}): string {
+  const district = options.districts?.find(
+    (candidate) =>
+      options.position.x >= candidate.bounds.minX &&
+      options.position.x <= candidate.bounds.maxX &&
+      options.position.z >= candidate.bounds.minZ &&
+      options.position.z <= candidate.bounds.maxZ
+  );
+
+  return district?.displayName ?? options.fallbackDistrictName;
+}
+
 export function createWorldNavigationSnapshot(
   options: CreateWorldNavigationSnapshotOptions
 ): { snapshot: WorldNavigationSnapshot; currentActorId: string; currentRoadId: string | null } {
@@ -171,7 +191,14 @@ export function createWorldNavigationSnapshot(
         possessionMode: options.possessionMode
       },
       streetLabel: currentRoad?.displayName ?? null,
-      districtName: options.manifest.sceneMetadata.districtName,
+      districtName: resolveCurrentDistrictName({
+        districts: options.manifest.districts,
+        fallbackDistrictName: options.manifest.sceneMetadata.districtName,
+        position: {
+          x: activeActor.position.x,
+          z: activeActor.position.z
+        }
+      }),
       locationName: options.manifest.sceneMetadata.displayName,
       bounds: options.manifest.bounds,
       roads: options.roadSnapshots ?? createWorldNavigationRoadSnapshots(options.manifest.roads)

@@ -81,6 +81,8 @@ function createManifest(): { manifest: SliceManifest; spawnCandidate: SpawnCandi
           ]
         }
       ],
+      districts: [],
+      worldEntries: [],
       sceneMetadata: {
         boundaryColor: "#8ec5fc",
         displayName: "San Francisco, CA",

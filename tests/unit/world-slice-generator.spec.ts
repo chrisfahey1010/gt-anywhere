@@ -55,6 +55,30 @@ describe("world slice generator", () => {
             minZ: -360,
             maxZ: 360
           },
+          districts: [
+            {
+              id: "district-market-core",
+              displayName: "Market Core",
+              bounds: {
+                minX: -280,
+                maxX: 60,
+                minZ: -260,
+                maxZ: 60
+              },
+              anchorRoadIds: ["market-st", "van-ness-ave"]
+            },
+            {
+              id: "district-mission-east",
+              displayName: "Mission East",
+              bounds: {
+                minX: -40,
+                maxX: 300,
+                minZ: 40,
+                maxZ: 280
+              },
+              anchorRoadIds: ["market-st"]
+            }
+          ],
           roads: [
             {
               id: "market-st",
@@ -75,6 +99,57 @@ describe("world slice generator", () => {
                 { x: -60, y: 0, z: -260 },
                 { x: 60, y: 0, z: 260 }
               ]
+            }
+          ],
+          worldEntries: [
+            {
+              id: "world-ferry-building",
+              districtId: "district-market-core",
+              kind: "landmark",
+              assetId: "building-2",
+              position: { x: -120, y: 0, z: -40 },
+              dimensions: {
+                width: 48,
+                height: 60,
+                depth: 32
+              },
+              yawDegrees: 18,
+              metadata: {
+                displayName: "Ferry Building Proxy",
+                source: "preset"
+              }
+            },
+            {
+              id: "world-market-corridor",
+              districtId: "district-market-core",
+              kind: "building-massing",
+              assetId: "building-1",
+              position: { x: 10, y: 0, z: -90 },
+              dimensions: {
+                width: 84,
+                height: 34,
+                depth: 24
+              },
+              metadata: {
+                displayName: "Market Corridor",
+                source: "preset"
+              }
+            },
+            {
+              id: "world-mission-block-a",
+              districtId: "district-mission-east",
+              kind: "building-massing",
+              assetId: "building-0",
+              position: { x: 140, y: 0, z: 170 },
+              dimensions: {
+                width: 36,
+                height: 28,
+                depth: 28
+              },
+              metadata: {
+                displayName: "Mission Block A",
+                source: "preset"
+              }
             }
           ]
         }
@@ -193,6 +268,90 @@ describe("world slice generator", () => {
         vehicleAccentColor: "#f0dfbf"
       },
       roadColor: "#f6d365"
+    });
+  });
+
+  it("threads explicit districts and manifest-owned world entries through preset-backed generation", async () => {
+    const generator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: createPresetSource(),
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const request = await createRequest(validLocationAliasQuery);
+    const result = await generator.generate(request);
+
+    expect(result.ok).toBe(true);
+
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.manifest.districts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "district-market-core",
+          displayName: "Market Core",
+          anchorRoadIds: ["market-st", "van-ness-ave"]
+        }),
+        expect.objectContaining({
+          id: "district-mission-east",
+          displayName: "Mission East",
+          anchorRoadIds: ["market-st"]
+        })
+      ])
+    );
+    expect(result.manifest.worldEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "world-ferry-building",
+          districtId: "district-market-core",
+          kind: "landmark",
+          chunkId: expect.any(String),
+          assetId: "building-2",
+          metadata: {
+            displayName: "Ferry Building Proxy",
+            source: "preset"
+          }
+        }),
+        expect.objectContaining({
+          id: "world-market-corridor",
+          districtId: "district-market-core",
+          kind: "building-massing",
+          chunkId: expect.any(String),
+          assetId: "building-1"
+        }),
+        expect.objectContaining({
+          id: "world-mission-block-a",
+          districtId: "district-mission-east",
+          kind: "building-massing",
+          chunkId: expect.any(String),
+          assetId: "building-0"
+        })
+      ])
+    );
+    expect(new Set(result.manifest.worldEntries.map((entry) => entry.id)).size).toBe(result.manifest.worldEntries.length);
+    expect(result.manifest.worldEntries.every((entry) => entry.chunkId.length > 0)).toBe(true);
+    expect(JSON.parse(JSON.stringify(result.manifest.worldEntries))).toEqual(result.manifest.worldEntries);
+  });
+
+  it("keeps one owner chunk and explicit related chunk ids when a world entry spans chunk boundaries", async () => {
+    const generator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: createPresetSource(),
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const request = await createRequest(validLocationAliasQuery);
+    const result = await generator.generate(request);
+
+    expect(result.ok).toBe(true);
+
+    if (!result.ok) {
+      return;
+    }
+
+    const entry = result.manifest.worldEntries.find((candidate) => candidate.id === "world-market-corridor");
+
+    expect(entry).toMatchObject({
+      chunkId: "chunk-1-0",
+      relatedChunkIds: ["chunk-0-0"]
     });
   });
 
@@ -368,6 +527,184 @@ describe("world slice generator", () => {
       ])
     );
     expect(result.manifest.roads.map((road) => road.displayName)).not.toContain(result.manifest.location.reuseKey);
+  });
+
+  it("derives fallback districts and world entries for non-spawn chunks with road coverage", async () => {
+    const generator = new DefaultWorldSliceGenerator({
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const request = await createRequest(validSingleTokenLocationQuery);
+    const result = await generator.generate(request);
+
+    expect(result.ok).toBe(true);
+
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.manifest.districts.length).toBeGreaterThanOrEqual(1);
+    expect(result.manifest.sceneMetadata.displayName).toBe(request.location.placeName);
+    expect(result.manifest.sceneMetadata.districtName).toBeTruthy();
+    expect(result.manifest.worldEntries.length).toBeGreaterThan(0);
+
+    result.manifest.chunks
+      .filter((chunk) => chunk.id !== result.spawnCandidate.chunkId)
+      .filter((chunk) => chunk.roadIds.length > 0)
+      .forEach((chunk) => {
+        expect(result.manifest.worldEntries.some((entry) => entry.chunkId === chunk.id)).toBe(true);
+      });
+
+    expect(result.manifest.worldEntries.every((entry) => entry.metadata.source === "derived")).toBe(true);
+    expect(result.manifest.roads.every((road) => typeof road.displayName === "string" && road.displayName.length > 0)).toBe(true);
+  });
+
+  it("supplements sparse preset world data with derived entries for uncovered non-spawn chunks", async () => {
+    const sparsePresetSource: GeoDataPresetSource = {
+      async fetch(reuseKey) {
+        if (reuseKey !== "san-francisco-ca") {
+          return null;
+        }
+
+        return {
+          presetId: "preset-san-francisco-sparse",
+          displayName: "San Francisco, CA",
+          districtName: "Downtown",
+          bounds: {
+            minX: -420,
+            maxX: 420,
+            minZ: -360,
+            maxZ: 360
+          },
+          districts: [
+            {
+              id: "district-market-core",
+              displayName: "Market Core",
+              bounds: {
+                minX: -280,
+                maxX: 60,
+                minZ: -260,
+                maxZ: 60
+              },
+              anchorRoadIds: ["market-st", "van-ness-ave"]
+            }
+          ],
+          roads: [
+            {
+              id: "market-st",
+              displayName: "Market Street",
+              kind: "primary",
+              width: 18,
+              points: [
+                { x: -280, y: 0, z: -200 },
+                { x: 280, y: 0, z: 200 }
+              ]
+            },
+            {
+              id: "van-ness-ave",
+              displayName: "Van Ness Avenue",
+              kind: "secondary",
+              width: 14,
+              points: [
+                { x: -60, y: 0, z: -260 },
+                { x: 60, y: 0, z: 260 }
+              ]
+            }
+          ],
+          worldEntries: [
+            {
+              id: "world-ferry-building",
+              districtId: "district-market-core",
+              kind: "landmark",
+              assetId: "building-2",
+              position: { x: -120, y: 0, z: -40 },
+              dimensions: {
+                width: 48,
+                height: 60,
+                depth: 32
+              },
+              metadata: {
+                displayName: "Ferry Building Proxy",
+                source: "preset"
+              }
+            }
+          ]
+        };
+      }
+    };
+    const generator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: sparsePresetSource,
+      manifestStore: new InMemorySliceManifestStore()
+    });
+    const request = await createRequest(validLocationAliasQuery);
+    const result = await generator.generate(request);
+
+    expect(result.ok).toBe(true);
+
+    if (!result.ok) {
+      return;
+    }
+
+    const nonSpawnRoadChunks = result.manifest.chunks.filter(
+      (chunk) => chunk.id !== result.spawnCandidate.chunkId && chunk.roadIds.length > 0
+    );
+
+    expect(nonSpawnRoadChunks.length).toBeGreaterThan(0);
+    nonSpawnRoadChunks.forEach((chunk) => {
+      expect(result.manifest.worldEntries.some((entry) => entry.chunkId === chunk.id)).toBe(true);
+    });
+    expect(result.manifest.worldEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "world-ferry-building",
+          metadata: {
+            displayName: "Ferry Building Proxy",
+            source: "preset"
+          }
+        }),
+        expect.objectContaining({
+          id: "chunk-1-1-world-entry-0",
+          metadata: expect.objectContaining({
+            source: "derived"
+          })
+        })
+      ])
+    );
+  });
+
+  it("rejects stale cached manifests when the generation version changes", async () => {
+    const basePresetSource = createPresetSource();
+    const manifestStore = new InMemorySliceManifestStore();
+    const fetchPreset = vi.fn(async (reuseKey: string) => basePresetSource.fetch(reuseKey));
+    const staleGenerator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: {
+        fetch: fetchPreset
+      },
+      generationVersion: "story-1-2",
+      manifestStore
+    });
+    const recognitionFirstGenerator = new DefaultWorldSliceGenerator({
+      geoDataPresetSource: {
+        fetch: fetchPreset
+      },
+      generationVersion: "story-5-2",
+      manifestStore
+    });
+    const request = await createRequest(validLocationAliasQuery);
+    const staleResult = await staleGenerator.generate(request);
+    const upgradedResult = await recognitionFirstGenerator.generate(request);
+
+    expect(staleResult.ok).toBe(true);
+    expect(upgradedResult.ok).toBe(true);
+
+    if (!staleResult.ok || !upgradedResult.ok) {
+      return;
+    }
+
+    expect(fetchPreset).toHaveBeenCalledTimes(2);
+    expect(staleResult.manifest.generationVersion).toBe("story-1-2");
+    expect(upgradedResult.manifest.generationVersion).toBe("story-5-2");
+    expect(upgradedResult.manifest).not.toBe(staleResult.manifest);
+    expect(manifestStore.getBySliceId(request.compatibilityKey)).toBe(upgradedResult.manifest);
   });
 
   it("adds a deterministic serializable traffic plan derived from the slice roads and chunk bounds", async () => {

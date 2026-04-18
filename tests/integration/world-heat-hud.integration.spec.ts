@@ -40,6 +40,8 @@ describe("world heat hud integration", () => {
         ]
       }
     ],
+    districts: [],
+    worldEntries: [],
     spawnCandidates: [
       {
         id: "spawn-0",

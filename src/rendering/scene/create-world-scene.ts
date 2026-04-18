@@ -17,7 +17,7 @@ import {
 } from "@babylonjs/core";
 import { loadAssetRegistry, type AssetEntry, type AssetRegistry } from "./asset-registry";
 import { attachAuthoredVisualToProxy } from "./authored-asset-visual";
-import type { SpawnCandidate, SliceManifest, SliceRoad } from "../../world/chunks/slice-manifest";
+import type { SpawnCandidate, SliceManifest, SliceRoad, SliceWorldEntry } from "../../world/chunks/slice-manifest";
 import { resolveSceneVisualPalette } from "../../world/chunks/scene-visual-palette";
 import { createOnFootCamera, type OnFootCamera } from "../../sandbox/on-foot/create-on-foot-camera";
 import {
@@ -271,84 +271,82 @@ function buildRoadSegments(
   return segments;
 }
 
-function resolveWorldMassingFallbackDimensions(
-  entry: AssetEntry | undefined,
-  chunkIndex: number,
-  buildingIndex: number
-): { depth: number; height: number; width: number } {
-  const fallbackProxy = entry?.fallbackProxy;
+export interface ChunkWorldMassingPlanEntry {
+  id: string;
+  meshName: string;
+  kind: SliceWorldEntry["kind"];
+  assetId?: string;
+  position: SliceWorldEntry["position"];
+  dimensions: SliceWorldEntry["dimensions"];
+  yawDegrees: number;
+  metadata: SliceWorldEntry["metadata"];
+}
 
-  if (
-    fallbackProxy &&
-    fallbackProxy.type === "box" &&
-    Array.isArray(fallbackProxy.dimensions) &&
-    fallbackProxy.dimensions.length === 3
-  ) {
-    return {
-      width: fallbackProxy.dimensions[0],
-      height: fallbackProxy.dimensions[1],
-      depth: fallbackProxy.dimensions[2]
-    };
-  }
-
-  return {
-    width: 20 + buildingIndex * 10,
-    depth: 18 + buildingIndex * 8,
-    height: 24 + buildingIndex * 14 + chunkIndex * 4
-  };
+export function createChunkWorldMassingPlan(
+  manifest: Pick<SliceManifest, "worldEntries">,
+  chunkId: string
+): ChunkWorldMassingPlanEntry[] {
+  return manifest.worldEntries
+    .filter((entry) => entry.chunkId === chunkId)
+    .map((entry) => ({
+      id: entry.id,
+      meshName: `${chunkId}-world-entry-${entry.id}`,
+      kind: entry.kind,
+      assetId: entry.assetId,
+      position: entry.position,
+      dimensions: entry.dimensions,
+      yawDegrees: entry.yawDegrees ?? 0,
+      metadata: entry.metadata
+    }));
 }
 
 async function buildChunkMassing(
   parent: TransformNode,
   manifest: SliceManifest,
-  chunkIndex: number,
-  spawnChunkId: string,
+  chunkId: string,
   material: StandardMaterial,
   assetRegistry: AssetRegistry
 ): Promise<AbstractMesh[]> {
-  const chunk = manifest.chunks[chunkIndex];
   const buildings: AbstractMesh[] = [];
-
-  if (!chunk || chunk.id === spawnChunkId) {
-    return buildings;
-  }
-
   const scene = material.getScene();
   const authoredVisualLoads: Promise<void>[] = [];
+  const massingPlan = createChunkWorldMassingPlan(manifest, chunkId);
 
-  for (let buildingIndex = 0; buildingIndex < 3; buildingIndex += 1) {
-    const assetId = `building-${buildingIndex}`;
-    const assetEntry = assetRegistry.world[assetId];
-    const { width, depth, height } = resolveWorldMassingFallbackDimensions(assetEntry, chunkIndex, buildingIndex);
+  for (const entry of massingPlan) {
+    const assetEntry: AssetEntry | undefined = entry.assetId ? assetRegistry.world[entry.assetId] : undefined;
     const building = MeshBuilder.CreateBox(
-      `${chunk.id}-building-${buildingIndex}`,
+      entry.meshName,
       {
-        width,
-        depth,
-        height
+        width: entry.dimensions.width,
+        depth: entry.dimensions.depth,
+        height: entry.dimensions.height
       },
       scene
     );
-    const buildingMaterial = material.clone(`${chunk.id}-building-${buildingIndex}-material`) as StandardMaterial;
 
-    building.position = new Vector3(
-      chunk.origin.x + 36 + buildingIndex * 38,
-      height / 2,
-      chunk.origin.z + 46 + (chunkIndex % 2) * 48
-    );
+    building.position = new Vector3(entry.position.x, entry.position.y + entry.dimensions.height / 2, entry.position.z);
+    building.rotation.y = (entry.yawDegrees * Math.PI) / 180;
     building.parent = parent;
-    building.material = buildingMaterial;
+    building.material = material;
+    building.metadata = {
+      worldAssetId: entry.assetId ?? null,
+      worldEntryId: entry.id,
+      worldEntryKind: entry.kind,
+      worldEntryLabel: entry.metadata.displayName
+    };
     buildings.push(building);
 
-    authoredVisualLoads.push(
-      attachAuthoredVisualToProxy({
-        assetId: `world:${assetId}`,
-        entry: assetEntry,
-        proxyMesh: building,
-        scene,
-        verticalOffset: -height / 2
-      }).then(() => undefined)
-    );
+    if (assetEntry && entry.assetId) {
+      authoredVisualLoads.push(
+        attachAuthoredVisualToProxy({
+          assetId: `world:${entry.assetId}`,
+          entry: assetEntry,
+          proxyMesh: building,
+          scene,
+          verticalOffset: -entry.dimensions.height / 2
+        }).then(() => undefined)
+      );
+    }
   }
 
   await Promise.all(authoredVisualLoads);
@@ -588,8 +586,7 @@ export class BabylonWorldSceneLoader implements WorldSceneLoader {
       const chunkMassing = await buildChunkMassing(
         chunkRoot,
         manifest,
-        chunkIndex,
-        spawnCandidate.chunkId,
+        chunk.id,
         chunkMassingMaterial,
         assetRegistry
       );

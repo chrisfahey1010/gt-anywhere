@@ -41,6 +41,8 @@ describe("player settings integration", () => {
         ]
       }
     ],
+    districts: [],
+    worldEntries: [],
     spawnCandidates: [
       {
         id: "spawn-0",

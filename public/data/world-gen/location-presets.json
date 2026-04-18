@@ -10,6 +10,30 @@
       "minZ": -360,
       "maxZ": 360
     },
+    "districts": [
+      {
+        "id": "district-market-core",
+        "displayName": "Market Core",
+        "bounds": {
+          "minX": -300,
+          "maxX": 80,
+          "minZ": -240,
+          "maxZ": 40
+        },
+        "anchorRoadIds": ["market-st", "van-ness-ave"]
+      },
+      {
+        "id": "district-mission-east",
+        "displayName": "Mission East",
+        "bounds": {
+          "minX": -40,
+          "maxX": 280,
+          "minZ": 40,
+          "maxZ": 280
+        },
+        "anchorRoadIds": ["market-st", "mission-st"]
+      }
+    ],
     "roads": [
       {
         "id": "market-st",
@@ -41,6 +65,45 @@
           { "x": 220, "y": 0, "z": 260 }
         ]
       }
+    ],
+    "worldEntries": [
+      {
+        "id": "sf-ferry-building",
+        "districtId": "district-market-core",
+        "kind": "landmark",
+        "assetId": "building-2",
+        "position": { "x": -110, "y": 0, "z": -70 },
+        "dimensions": { "width": 48, "height": 60, "depth": 34 },
+        "yawDegrees": 18,
+        "metadata": {
+          "displayName": "Ferry Building Proxy",
+          "source": "preset"
+        }
+      },
+      {
+        "id": "sf-civic-block",
+        "districtId": "district-market-core",
+        "kind": "building-massing",
+        "assetId": "building-1",
+        "position": { "x": 30, "y": 0, "z": -80 },
+        "dimensions": { "width": 82, "height": 36, "depth": 28 },
+        "metadata": {
+          "displayName": "Market Corridor",
+          "source": "preset"
+        }
+      },
+      {
+        "id": "sf-mission-block",
+        "districtId": "district-mission-east",
+        "kind": "building-massing",
+        "assetId": "building-0",
+        "position": { "x": 140, "y": 0, "z": 170 },
+        "dimensions": { "width": 36, "height": 28, "depth": 28 },
+        "metadata": {
+          "displayName": "Mission Block A",
+          "source": "preset"
+        }
+      }
     ]
   },
   {
@@ -54,6 +117,30 @@
       "minZ": -420,
       "maxZ": 420
     },
+    "districts": [
+      {
+        "id": "district-midtown-west",
+        "displayName": "Midtown West",
+        "bounds": {
+          "minX": -240,
+          "maxX": 120,
+          "minZ": -380,
+          "maxZ": 120
+        },
+        "anchorRoadIds": ["broadway", "seventh-ave"]
+      },
+      {
+        "id": "district-theater-row",
+        "displayName": "Theater Row",
+        "bounds": {
+          "minX": -120,
+          "maxX": 320,
+          "minZ": -40,
+          "maxZ": 200
+        },
+        "anchorRoadIds": ["broadway", "west-42nd"]
+      }
+    ],
     "roads": [
       {
         "id": "broadway",
@@ -85,6 +172,45 @@
           { "x": 320, "y": 0, "z": 20 }
         ]
       }
+    ],
+    "worldEntries": [
+      {
+        "id": "ny-times-tower",
+        "districtId": "district-midtown-west",
+        "kind": "landmark",
+        "assetId": "building-2",
+        "position": { "x": -150, "y": 0, "z": -110 },
+        "dimensions": { "width": 50, "height": 70, "depth": 32 },
+        "yawDegrees": -12,
+        "metadata": {
+          "displayName": "Broadway Tower",
+          "source": "preset"
+        }
+      },
+      {
+        "id": "ny-broadway-block",
+        "districtId": "district-midtown-west",
+        "kind": "building-massing",
+        "assetId": "building-1",
+        "position": { "x": -30, "y": 0, "z": 60 },
+        "dimensions": { "width": 78, "height": 44, "depth": 26 },
+        "metadata": {
+          "displayName": "Broadway Block",
+          "source": "preset"
+        }
+      },
+      {
+        "id": "ny-west-42nd-row",
+        "districtId": "district-theater-row",
+        "kind": "building-massing",
+        "assetId": "building-0",
+        "position": { "x": 160, "y": 0, "z": 30 },
+        "dimensions": { "width": 40, "height": 32, "depth": 24 },
+        "metadata": {
+          "displayName": "42nd Street Row",
+          "source": "preset"
+        }
+      }
     ]
   },
   {
@@ -98,6 +224,30 @@
       "minZ": -320,
       "maxZ": 320
     },
+    "districts": [
+      {
+        "id": "district-times-square-core",
+        "displayName": "Times Square Core",
+        "bounds": {
+          "minX": -180,
+          "maxX": 120,
+          "minZ": -180,
+          "maxZ": 120
+        },
+        "anchorRoadIds": ["broadway-plaza", "seventh-ave-ts"]
+      },
+      {
+        "id": "district-theater-edge",
+        "displayName": "Theater Edge",
+        "bounds": {
+          "minX": 40,
+          "maxX": 280,
+          "minZ": -20,
+          "maxZ": 180
+        },
+        "anchorRoadIds": ["broadway-plaza", "west-45th"]
+      }
+    ],
     "roads": [
       {
         "id": "broadway-plaza",
@@ -129,6 +279,44 @@
           { "x": 280, "y": 0, "z": 40 }
         ]
       }
+    ],
+    "worldEntries": [
+      {
+        "id": "ts-red-steps-proxy",
+        "districtId": "district-times-square-core",
+        "kind": "landmark",
+        "assetId": "building-2",
+        "position": { "x": -60, "y": 0, "z": -40 },
+        "dimensions": { "width": 44, "height": 56, "depth": 30 },
+        "metadata": {
+          "displayName": "Times Square Steps",
+          "source": "preset"
+        }
+      },
+      {
+        "id": "ts-broadway-ribbon",
+        "districtId": "district-times-square-core",
+        "kind": "building-massing",
+        "assetId": "building-1",
+        "position": { "x": 30, "y": 0, "z": 20 },
+        "dimensions": { "width": 74, "height": 40, "depth": 24 },
+        "metadata": {
+          "displayName": "Broadway Ribbon",
+          "source": "preset"
+        }
+      },
+      {
+        "id": "ts-west-45th-block",
+        "districtId": "district-theater-edge",
+        "kind": "building-massing",
+        "assetId": "building-0",
+        "position": { "x": 160, "y": 0, "z": 90 },
+        "dimensions": { "width": 38, "height": 28, "depth": 24 },
+        "metadata": {
+          "displayName": "45th Street Block",
+          "source": "preset"
+        }
+      }
     ]
   },
   {
@@ -142,6 +330,30 @@
       "minZ": -320,
       "maxZ": 320
     },
+    "districts": [
+      {
+        "id": "district-north-bayshore-core",
+        "displayName": "North Bayshore Core",
+        "bounds": {
+          "minX": -220,
+          "maxX": 140,
+          "minZ": -180,
+          "maxZ": 160
+        },
+        "anchorRoadIds": ["amphitheatre-parkway", "charleston-road"]
+      },
+      {
+        "id": "district-shoreline-edge",
+        "displayName": "Shoreline Edge",
+        "bounds": {
+          "minX": -40,
+          "maxX": 220,
+          "minZ": -240,
+          "maxZ": 260
+        },
+        "anchorRoadIds": ["shoreline-boulevard", "amphitheatre-parkway"]
+      }
+    ],
     "roads": [
       {
         "id": "amphitheatre-parkway",
@@ -172,6 +384,44 @@
           { "x": -20, "y": 0, "z": -260 },
           { "x": 120, "y": 0, "z": 260 }
         ]
+      }
+    ],
+    "worldEntries": [
+      {
+        "id": "mv-campus-core",
+        "districtId": "district-north-bayshore-core",
+        "kind": "landmark",
+        "assetId": "building-2",
+        "position": { "x": -120, "y": 0, "z": -40 },
+        "dimensions": { "width": 62, "height": 34, "depth": 40 },
+        "metadata": {
+          "displayName": "Campus Core",
+          "source": "preset"
+        }
+      },
+      {
+        "id": "mv-charleston-office",
+        "districtId": "district-north-bayshore-core",
+        "kind": "building-massing",
+        "assetId": "building-1",
+        "position": { "x": 40, "y": 0, "z": 120 },
+        "dimensions": { "width": 52, "height": 30, "depth": 28 },
+        "metadata": {
+          "displayName": "Charleston Office Row",
+          "source": "preset"
+        }
+      },
+      {
+        "id": "mv-shoreline-office",
+        "districtId": "district-shoreline-edge",
+        "kind": "building-massing",
+        "assetId": "building-0",
+        "position": { "x": 120, "y": 0, "z": -140 },
+        "dimensions": { "width": 36, "height": 26, "depth": 24 },
+        "metadata": {
+          "displayName": "Shoreline Office",
+          "source": "preset"
+        }
       }
     ]
   }

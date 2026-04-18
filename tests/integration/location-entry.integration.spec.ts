@@ -53,6 +53,8 @@ describe("location entry integration", () => {
         ]
       }
     ],
+    districts: [],
+    worldEntries: [],
     spawnCandidates: [
       {
         id: "spawn-0",

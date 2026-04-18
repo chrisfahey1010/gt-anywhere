@@ -47,6 +47,8 @@ describe("app bootstrap smoke", () => {
         ]
       }
     ],
+    districts: [],
+    worldEntries: [],
     spawnCandidates: [
       {
         id: "spawn-0",

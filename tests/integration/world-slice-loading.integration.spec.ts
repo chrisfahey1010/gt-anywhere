@@ -28,6 +28,19 @@ describe("world slice loading integration", () => {
             minZ: -360,
             maxZ: 360
           },
+          districts: [
+            {
+              id: "district-market-core",
+              displayName: "Market Core",
+              bounds: {
+                minX: -280,
+                maxX: 60,
+                minZ: -260,
+                maxZ: 60
+              },
+              anchorRoadIds: ["market-st", "van-ness-ave"]
+            }
+          ],
           roads: [
             {
               id: "market-st",
@@ -47,6 +60,24 @@ describe("world slice loading integration", () => {
                 { x: 60, y: 0, z: 260 }
               ]
             }
+          ],
+          worldEntries: [
+            {
+              id: "world-ferry-building",
+              districtId: "district-market-core",
+              kind: "landmark",
+              assetId: "building-2",
+              position: { x: -120, y: 0, z: -40 },
+              dimensions: {
+                width: 48,
+                height: 60,
+                depth: 32
+              },
+              metadata: {
+                displayName: "Ferry Building Proxy",
+                source: "preset"
+              }
+            }
           ]
         }
       ],
@@ -62,6 +93,19 @@ describe("world slice loading integration", () => {
             minZ: -320,
             maxZ: 320
           },
+          districts: [
+            {
+              id: "district-north-bayshore-core",
+              displayName: "North Bayshore Core",
+              bounds: {
+                minX: -220,
+                maxX: 140,
+                minZ: -180,
+                maxZ: 160
+              },
+              anchorRoadIds: ["amphitheatre-parkway"]
+            }
+          ],
           roads: [
             {
               id: "amphitheatre-parkway",
@@ -71,6 +115,24 @@ describe("world slice loading integration", () => {
                 { x: -320, y: 0, z: 0 },
                 { x: 320, y: 0, z: 0 }
               ]
+            }
+          ],
+          worldEntries: [
+            {
+              id: "mv-campus-core",
+              districtId: "district-north-bayshore-core",
+              kind: "landmark",
+              assetId: "building-2",
+              position: { x: -120, y: 0, z: -40 },
+              dimensions: {
+                width: 62,
+                height: 34,
+                depth: 40
+              },
+              metadata: {
+                displayName: "Campus Core",
+                source: "preset"
+              }
             }
           ]
         }
@@ -132,6 +194,8 @@ describe("world slice loading integration", () => {
     expect(snapshot.phase).toBe("world-ready");
     expect(snapshot.sessionIdentity?.placeName).toBeTruthy();
     expect(snapshot.sliceManifest?.sliceId).toBeTruthy();
+    expect(snapshot.sliceManifest?.districts.length ?? 0).toBeGreaterThan(0);
+    expect(snapshot.sliceManifest?.worldEntries.length ?? 0).toBeGreaterThan(0);
     expect(snapshot.sliceManifest?.traffic?.vehicles.length ?? 0).toBeGreaterThan(0);
     expect(snapshot.spawnCandidate?.id).toMatch(/^spawn-/);
     expect(manifestStore.getBySliceId(snapshot.sliceManifest?.sliceId ?? "")).toEqual(snapshot.sliceManifest);

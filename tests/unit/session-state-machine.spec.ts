@@ -50,6 +50,8 @@ describe("session state machine", () => {
         ]
       }
     ],
+    districts: [],
+    worldEntries: [],
     spawnCandidates: [
       {
         id: "spawn-0",

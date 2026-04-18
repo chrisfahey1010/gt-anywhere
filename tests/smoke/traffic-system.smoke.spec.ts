@@ -79,6 +79,8 @@ describe("traffic system smoke", () => {
             width: 18
           }
         ],
+        districts: [],
+        worldEntries: [],
         sceneMetadata: {
           boundaryColor: "#000000",
           displayName: "Test City",

@@ -43,6 +43,8 @@ describe("starter vehicle camera integration", () => {
         ]
       }
     ],
+    districts: [],
+    worldEntries: [],
     spawnCandidates: [
       {
         id: "spawn-0",

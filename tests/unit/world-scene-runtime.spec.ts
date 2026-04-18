@@ -307,6 +307,71 @@ describe("world scene runtime helpers", () => {
     expect(result.snapshot.streetLabel).toBe("Van Ness Avenue");
   });
 
+  it("prefers explicit manifest districts for the navigation label before falling back to scene metadata", () => {
+    const result = createWorldNavigationSnapshot({
+      activeVehicle: {
+        mesh: {
+          name: "vehicle-runtime",
+          position: new Vector3(72, 1.7, 48),
+          rotation: new Vector3(0, 0, 0)
+        },
+        vehicleType: "sedan"
+      },
+      manifest: {
+        bounds: {
+          minX: -120,
+          maxX: 120,
+          minZ: -90,
+          maxZ: 90
+        },
+        districts: [
+          {
+            id: "district-market-core",
+            displayName: "Market Core",
+            bounds: {
+              minX: -120,
+              maxX: 20,
+              minZ: -90,
+              maxZ: 20
+            },
+            anchorRoadIds: ["market-st"]
+          },
+          {
+            id: "district-mission-east",
+            displayName: "Mission East",
+            bounds: {
+              minX: 21,
+              maxX: 120,
+              minZ: 0,
+              maxZ: 90
+            },
+            anchorRoadIds: ["mission-st"]
+          }
+        ],
+        roads: [
+          {
+            id: "mission-st",
+            displayName: "Mission Street",
+            kind: "tertiary",
+            width: 12,
+            points: [
+              { x: 20, y: 0, z: 40 },
+              { x: 100, y: 0, z: 40 }
+            ]
+          }
+        ],
+        sceneMetadata: {
+          displayName: "San Francisco, CA",
+          districtName: "Downtown"
+        }
+      },
+      possessionMode: "vehicle"
+    });
+
+    expect(result.snapshot.streetLabel).toBe("Mission Street");
+    expect(result.snapshot.districtName).toBe("Mission East");
+  });
+
   it("resets sticky road selection when control transfers to a different actor", () => {
     const result = createWorldNavigationSnapshot({
       activeVehicle: {

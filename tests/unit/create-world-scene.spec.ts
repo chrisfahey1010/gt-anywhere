@@ -1,6 +1,11 @@
 import { createSceneBrowserSupportTelemetry } from "../../src/app/config/browser-support-telemetry";
-import { resolveSceneGraphicsPresetProfile, resolveSceneStarterVehicleType } from "../../src/rendering/scene/create-world-scene";
+import {
+  createChunkWorldMassingPlan,
+  resolveSceneGraphicsPresetProfile,
+  resolveSceneStarterVehicleType
+} from "../../src/rendering/scene/create-world-scene";
 import type { BrowserSupportSnapshot } from "../../src/app/config/platform";
+import type { SliceManifest } from "../../src/world/chunks/slice-manifest";
 
 describe("create world scene", () => {
   it("keeps the sedan baseline unless a replay launch requests a different starter vehicle", () => {
@@ -100,5 +105,102 @@ describe("create world scene", () => {
       browserSupportTier: "degraded",
       browserWebgl2Available: "true"
     });
+  });
+
+  it("builds chunk world massing plans from manifest world entries instead of a fixed three-building fallback", () => {
+    const manifest: Pick<SliceManifest, "worldEntries"> = {
+      worldEntries: [
+        {
+          id: "world-ferry-building",
+          chunkId: "chunk-0-0",
+          districtId: "district-market-core",
+          kind: "landmark",
+          assetId: "building-2",
+          position: { x: -120, y: 0, z: -40 },
+          dimensions: {
+            width: 48,
+            height: 60,
+            depth: 32
+          },
+          yawDegrees: 18,
+          metadata: {
+            displayName: "Ferry Building Proxy",
+            source: "preset"
+          }
+        },
+        {
+          id: "world-market-corridor",
+          chunkId: "chunk-0-0",
+          districtId: "district-market-core",
+          kind: "building-massing",
+          assetId: "building-1",
+          position: { x: 10, y: 0, z: -90 },
+          dimensions: {
+            width: 84,
+            height: 34,
+            depth: 24
+          },
+          metadata: {
+            displayName: "Market Corridor",
+            source: "preset"
+          }
+        },
+        {
+          id: "world-mission-block-a",
+          chunkId: "chunk-1-1",
+          districtId: "district-mission-east",
+          kind: "building-massing",
+          assetId: "building-0",
+          position: { x: 140, y: 0, z: 170 },
+          dimensions: {
+            width: 36,
+            height: 28,
+            depth: 28
+          },
+          metadata: {
+            displayName: "Mission Block A",
+            source: "preset"
+          }
+        }
+      ]
+    };
+
+    expect(createChunkWorldMassingPlan(manifest, "chunk-0-0")).toEqual([
+      {
+        id: "world-ferry-building",
+        meshName: "chunk-0-0-world-entry-world-ferry-building",
+        kind: "landmark",
+        assetId: "building-2",
+        position: { x: -120, y: 0, z: -40 },
+        dimensions: {
+          width: 48,
+          height: 60,
+          depth: 32
+        },
+        yawDegrees: 18,
+        metadata: {
+          displayName: "Ferry Building Proxy",
+          source: "preset"
+        }
+      },
+      {
+        id: "world-market-corridor",
+        meshName: "chunk-0-0-world-entry-world-market-corridor",
+        kind: "building-massing",
+        assetId: "building-1",
+        position: { x: 10, y: 0, z: -90 },
+        dimensions: {
+          width: 84,
+          height: 34,
+          depth: 24
+        },
+        yawDegrees: 0,
+        metadata: {
+          displayName: "Market Corridor",
+          source: "preset"
+        }
+      }
+    ]);
+    expect(createChunkWorldMassingPlan(manifest, "chunk-1-0")).toEqual([]);
   });
 });

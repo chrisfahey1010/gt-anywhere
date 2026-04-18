@@ -41,6 +41,8 @@ describe("world navigation hud integration", () => {
         ]
       }
     ],
+    districts: [],
+    worldEntries: [],
     spawnCandidates: [
       {
         id: "spawn-0",

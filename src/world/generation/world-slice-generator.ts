@@ -2,10 +2,13 @@ import type {
   SliceBreakablePropPlan,
   SliceBounds,
   SliceChunk,
+  SliceDistrict,
   SliceManifest,
   SlicePedestrianPlan,
   SliceRoad,
   SliceTrafficPlan,
+  SliceVector3,
+  SliceWorldEntry,
   SpawnCandidate
 } from "../chunks/slice-manifest";
 import { DEFAULT_SCENE_VISUAL_PALETTE_OVERRIDES } from "../chunks/scene-visual-palette";
@@ -34,7 +37,20 @@ export interface GeoDataPreset {
   displayName: string;
   districtName: string;
   bounds: SliceBounds;
+  districts: SliceDistrict[];
   roads: SliceRoad[];
+  worldEntries: GeoDataPresetWorldEntry[];
+}
+
+export interface GeoDataPresetWorldEntry {
+  id: string;
+  districtId: string;
+  kind: SliceWorldEntry["kind"];
+  assetId?: string;
+  position: SliceVector3;
+  dimensions: SliceWorldEntry["dimensions"];
+  yawDegrees?: number;
+  metadata: SliceWorldEntry["metadata"];
 }
 
 export interface GeoDataPresetSource {
@@ -79,6 +95,33 @@ function clampRoadPoint(point: SliceRoad["points"][number], bounds: SliceBounds)
   };
 }
 
+function clampValue(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function clampBoundsToSlice(bounds: SliceBounds, sliceBounds: SliceBounds): SliceBounds {
+  const minX = clampValue(bounds.minX, sliceBounds.minX, sliceBounds.maxX);
+  const maxX = clampValue(bounds.maxX, sliceBounds.minX, sliceBounds.maxX);
+  const minZ = clampValue(bounds.minZ, sliceBounds.minZ, sliceBounds.maxZ);
+  const maxZ = clampValue(bounds.maxZ, sliceBounds.minZ, sliceBounds.maxZ);
+
+  return {
+    minX: Math.min(minX, maxX),
+    maxX: Math.max(minX, maxX),
+    minZ: Math.min(minZ, maxZ),
+    maxZ: Math.max(minZ, maxZ)
+  };
+}
+
+function createStableIdFragment(value: string): string {
+  const normalized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized || "slice";
+}
+
 function chooseDistrictName(identity: SessionLocationIdentity): string {
   const [primarySegment] = identity.placeName.split(",");
 
@@ -104,6 +147,7 @@ function createFallbackPreset(identity: SessionLocationIdentity): GeoDataPreset 
     displayName: identity.placeName,
     districtName: chooseDistrictName(identity),
     bounds,
+    districts: [],
     roads: [
       {
         id: `${identity.reuseKey}-arterial`,
@@ -133,7 +177,8 @@ function createFallbackPreset(identity: SessionLocationIdentity): GeoDataPreset 
           { x: bounds.maxX - 140, y: 0, z: bounds.maxZ - 140 }
         ]
       }
-    ]
+    ],
+    worldEntries: []
   };
 }
 
@@ -179,6 +224,17 @@ function scalePointAroundBoundsCenter(point: SliceRoad["points"][number], bounds
   };
 }
 
+function scaleVectorAroundBoundsCenter(point: SliceVector3, bounds: SliceBounds, scale: number): SliceVector3 {
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerZ = (bounds.minZ + bounds.maxZ) / 2;
+
+  return {
+    x: centerX + (point.x - centerX) * scale,
+    y: point.y * scale,
+    z: centerZ + (point.z - centerZ) * scale
+  };
+}
+
 function scalePresetForWorldSize(preset: GeoDataPreset, worldSize: WorldSize): GeoDataPreset {
   const scale = WORLD_SIZE_SCALE[worldSize];
 
@@ -189,9 +245,22 @@ function scalePresetForWorldSize(preset: GeoDataPreset, worldSize: WorldSize): G
   return {
     ...preset,
     bounds: scaleBounds(preset.bounds, scale),
+    districts: preset.districts.map((district) => ({
+      ...district,
+      bounds: scaleBounds(district.bounds, scale)
+    })),
     roads: preset.roads.map((road) => ({
       ...road,
       points: road.points.map((point) => scalePointAroundBoundsCenter(point, preset.bounds, scale))
+    })),
+    worldEntries: preset.worldEntries.map((entry) => ({
+      ...entry,
+      position: scaleVectorAroundBoundsCenter(entry.position, preset.bounds, scale),
+      dimensions: {
+        width: entry.dimensions.width * scale,
+        height: entry.dimensions.height * scale,
+        depth: entry.dimensions.depth * scale
+      }
     }))
   };
 }
@@ -210,6 +279,35 @@ function runPlayabilityPassPipeline(bounds: SliceBounds, roads: SliceRoad[]): Sl
   }));
 }
 
+function createDerivedDistrict(preset: GeoDataPreset, bounds: SliceBounds, roads: SliceRoad[]): SliceDistrict {
+  return {
+    id: `${createStableIdFragment(preset.presetId)}-district-0`,
+    displayName: preset.districtName,
+    bounds,
+    anchorRoadIds: roads.slice(0, 2).map((road) => road.id)
+  };
+}
+
+function runDistrictPlanner(bounds: SliceBounds, preset: GeoDataPreset, roads: SliceRoad[]): SliceDistrict[] {
+  const knownRoadIds = new Set(roads.map((road) => road.id));
+  const normalizedDistricts = preset.districts
+    .map((district) => ({
+      ...district,
+      bounds: clampBoundsToSlice(district.bounds, bounds),
+      anchorRoadIds: district.anchorRoadIds.filter((roadId) => knownRoadIds.has(roadId))
+    }))
+    .map((district, index) => ({
+      ...district,
+      anchorRoadIds:
+        district.anchorRoadIds.length > 0
+          ? district.anchorRoadIds
+          : roads.slice(index, index + 2).map((road) => road.id).filter((roadId) => typeof roadId === "string")
+    }))
+    .filter((district) => district.displayName.length > 0);
+
+  return normalizedDistricts.length > 0 ? normalizedDistricts : [createDerivedDistrict(preset, bounds, roads)];
+}
+
 function roadTouchesChunk(road: SliceRoad, chunk: SliceChunk): boolean {
   return road.points.some(
     (point) =>
@@ -217,6 +315,82 @@ function roadTouchesChunk(road: SliceRoad, chunk: SliceChunk): boolean {
       point.x <= chunk.origin.x + chunk.size.width &&
       point.z >= chunk.origin.z &&
       point.z <= chunk.origin.z + chunk.size.depth
+  );
+}
+
+function pointFallsInsideChunk(point: SliceVector3, chunk: SliceChunk): boolean {
+  return (
+    point.x >= chunk.origin.x &&
+    point.x <= chunk.origin.x + chunk.size.width &&
+    point.z >= chunk.origin.z &&
+    point.z <= chunk.origin.z + chunk.size.depth
+  );
+}
+
+function createWorldEntryFootprintBounds(
+  position: SliceVector3,
+  dimensions: SliceWorldEntry["dimensions"]
+): SliceBounds {
+  return {
+    minX: position.x - dimensions.width / 2,
+    maxX: position.x + dimensions.width / 2,
+    minZ: position.z - dimensions.depth / 2,
+    maxZ: position.z + dimensions.depth / 2
+  };
+}
+
+function chunkIntersectsBounds(chunk: SliceChunk, bounds: SliceBounds): boolean {
+  return !(
+    bounds.maxX < chunk.origin.x ||
+    bounds.minX > chunk.origin.x + chunk.size.width ||
+    bounds.maxZ < chunk.origin.z ||
+    bounds.minZ > chunk.origin.z + chunk.size.depth
+  );
+}
+
+function clampWorldEntryPosition(
+  position: SliceVector3,
+  dimensions: SliceWorldEntry["dimensions"],
+  bounds: SliceBounds
+): SliceVector3 {
+  return {
+    x: clampValue(position.x, bounds.minX + dimensions.width / 2, bounds.maxX - dimensions.width / 2),
+    y: position.y,
+    z: clampValue(position.z, bounds.minZ + dimensions.depth / 2, bounds.maxZ - dimensions.depth / 2)
+  };
+}
+
+function resolveWorldEntryChunkOwnership(
+  chunks: SliceChunk[],
+  position: SliceVector3,
+  dimensions: SliceWorldEntry["dimensions"]
+): { chunkId: string; relatedChunkIds?: string[] } {
+  const footprintBounds = createWorldEntryFootprintBounds(position, dimensions);
+  const ownerChunk =
+    chunks.find((chunk) => pointFallsInsideChunk(position, chunk)) ??
+    chunks.find((chunk) => chunkIntersectsBounds(chunk, footprintBounds)) ??
+    chunks[0];
+  const relatedChunkIds = ownerChunk
+    ? chunks
+        .filter((chunk) => chunk.id !== ownerChunk.id && chunkIntersectsBounds(chunk, footprintBounds))
+        .map((chunk) => chunk.id)
+    : [];
+
+  return {
+    chunkId: ownerChunk?.id ?? "chunk-0-0",
+    relatedChunkIds: relatedChunkIds.length > 0 ? relatedChunkIds : undefined
+  };
+}
+
+function resolveDistrictIdForPosition(position: SliceVector3, districts: SliceDistrict[]): string {
+  return (
+    districts.find(
+      (district) =>
+        position.x >= district.bounds.minX &&
+        position.x <= district.bounds.maxX &&
+        position.z >= district.bounds.minZ &&
+        position.z <= district.bounds.maxZ
+    )?.id ?? districts[0]?.id ?? "fallback-district"
   );
 }
 
@@ -321,6 +495,75 @@ function runSpawnPlanner(chunks: SliceChunk[], roads: SliceRoad[]): SpawnCandida
   ];
 }
 
+function runWorldEntryPlanner(options: {
+  bounds: SliceBounds;
+  chunks: SliceChunk[];
+  districts: SliceDistrict[];
+  preset: GeoDataPreset;
+  spawnChunkId: string;
+}): SliceWorldEntry[] {
+  const { bounds, chunks, districts, preset, spawnChunkId } = options;
+  const districtIds = new Set(districts.map((district) => district.id));
+  const fallbackDistrictId = districts[0]?.id ?? `${createStableIdFragment(preset.presetId)}-district-0`;
+  const normalizedEntries = preset.worldEntries.map((entry) => {
+    const position = clampWorldEntryPosition(entry.position, entry.dimensions, bounds);
+    const ownership = resolveWorldEntryChunkOwnership(chunks, position, entry.dimensions);
+
+    return {
+      ...entry,
+      chunkId: ownership.chunkId,
+      districtId: districtIds.has(entry.districtId) ? entry.districtId : fallbackDistrictId,
+      position,
+      relatedChunkIds: ownership.relatedChunkIds
+    } satisfies SliceWorldEntry;
+  });
+
+  const coveredChunkIds = new Set(normalizedEntries.map((entry) => entry.chunkId));
+  const derivedEntries: SliceWorldEntry[] = chunks
+    .filter((chunk) => chunk.id !== spawnChunkId && chunk.roadIds.length > 0)
+    .filter((chunk) => !coveredChunkIds.has(chunk.id))
+    .map(
+      (chunk, index) =>
+        ({
+          id: `${chunk.id}-world-entry-0`,
+          chunkId: chunk.id,
+          districtId: resolveDistrictIdForPosition(
+            {
+              x: chunk.origin.x + chunk.size.width / 2,
+              y: 0,
+              z: chunk.origin.z + chunk.size.depth / 2
+            },
+            districts
+          ),
+          kind: "building-massing",
+          assetId: `building-${index % 3}`,
+          position: {
+            x: chunk.origin.x + chunk.size.width / 2,
+            y: 0,
+            z: chunk.origin.z + chunk.size.depth / 2
+          },
+          dimensions: {
+            width: Math.max(26, chunk.size.width * 0.18),
+            height: 28 + index * 8,
+            depth: Math.max(22, chunk.size.depth * 0.18)
+          },
+          metadata: {
+            displayName: `${preset.districtName} Block ${index + 1}`,
+            source: "derived"
+          }
+        }) satisfies SliceWorldEntry
+    );
+
+  if (normalizedEntries.length === 0) {
+    return derivedEntries.map((entry): SliceWorldEntry => ({
+      ...entry,
+      districtId: entry.districtId || fallbackDistrictId
+    }));
+  }
+
+  return [...normalizedEntries, ...derivedEntries];
+}
+
 function createFallbackSpawnCandidate(chunks: SliceChunk[], roads: SliceRoad[]): SpawnCandidate {
   return {
     id: "spawn-chunk-0-0",
@@ -340,6 +583,8 @@ function createSliceManifest(
   bounds: SliceBounds,
   chunks: SliceChunk[],
   roads: SliceRoad[],
+  districts: SliceDistrict[],
+  worldEntries: SliceWorldEntry[],
   spawnCandidates: SpawnCandidate[],
   traffic: SliceTrafficPlan,
   pedestrians: SlicePedestrianPlan,
@@ -358,13 +603,15 @@ function createSliceManifest(
     bounds,
     chunks,
     roads,
+    districts,
+    worldEntries,
     spawnCandidates,
     traffic,
     pedestrians,
     breakableProps,
     sceneMetadata: {
       displayName: preset.displayName,
-      districtName: preset.districtName,
+      districtName: preset.districtName || districts[0]?.displayName || preset.displayName,
       roadColor: "#f6d365",
       groundColor: "#263238",
       boundaryColor: "#8ec5fc",
@@ -442,7 +689,7 @@ export class DefaultWorldSliceGenerator implements WorldSliceGenerator {
   constructor(options: DefaultWorldSliceGeneratorOptions = {}) {
     this.geoDataPresetSource = options.geoDataPresetSource ?? new FetchGeoDataPresetSource();
     this.manifestStore = options.manifestStore ?? new InMemorySliceManifestStore();
-    this.generationVersion = options.generationVersion ?? "story-1-2";
+    this.generationVersion = options.generationVersion ?? "story-5-2";
   }
 
   async generate(request: WorldGenerationRequest): Promise<WorldSliceGenerationResult> {
@@ -458,13 +705,21 @@ export class DefaultWorldSliceGenerator implements WorldSliceGenerator {
         };
       }
 
-      const identity = await runLocationResolver(request);
+      await runLocationResolver(request);
       const preset = await runGeoDataFetcher(request, this.geoDataPresetSource);
       const bounds = runSliceBoundaryPlanner(preset);
       const roads = applyRoadDisplayNames(runPlayabilityPassPipeline(bounds, runRoadNormalizer(bounds, preset)));
+      const districts = runDistrictPlanner(bounds, preset, roads);
       const chunks = runChunkAssembler(bounds, roads);
       const spawnCandidates = runSpawnPlanner(chunks, roads);
       const primarySpawnCandidate = spawnCandidates[0] ?? createFallbackSpawnCandidate(chunks, roads);
+      const worldEntries = runWorldEntryPlanner({
+        bounds,
+        chunks,
+        districts,
+        preset,
+        spawnChunkId: primarySpawnCandidate.chunkId
+      });
       const traffic = createTrafficPlan({
         bounds,
         chunks,
@@ -496,6 +751,8 @@ export class DefaultWorldSliceGenerator implements WorldSliceGenerator {
         bounds,
         chunks,
         roads,
+        districts,
+        worldEntries,
         spawnCandidates,
         traffic,
         pedestrians,

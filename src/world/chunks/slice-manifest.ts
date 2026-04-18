@@ -31,6 +31,37 @@ export interface SliceRoad {
   points: SliceVector3[];
 }
 
+export interface SliceDistrict {
+  id: string;
+  displayName: string;
+  bounds: SliceBounds;
+  anchorRoadIds: string[];
+}
+
+export type SliceWorldEntryKind = "building-massing" | "landmark";
+
+export interface SliceWorldEntryMetadata {
+  displayName: string;
+  source: "preset" | "derived";
+}
+
+export interface SliceWorldEntry {
+  id: string;
+  chunkId: string;
+  districtId: string;
+  kind: SliceWorldEntryKind;
+  assetId?: string;
+  position: SliceVector3;
+  dimensions: {
+    width: number;
+    height: number;
+    depth: number;
+  };
+  yawDegrees?: number;
+  relatedChunkIds?: string[];
+  metadata: SliceWorldEntryMetadata;
+}
+
 export interface SpawnCandidate {
   id: string;
   chunkId: string;
@@ -145,6 +176,8 @@ export interface SliceManifest {
   bounds: SliceBounds;
   chunks: SliceChunk[];
   roads: SliceRoad[];
+  districts: SliceDistrict[];
+  worldEntries: SliceWorldEntry[];
   spawnCandidates: SpawnCandidate[];
   sceneMetadata: SliceSceneMetadata;
   traffic?: SliceTrafficPlan;
